@@ -1,0 +1,28 @@
+# Agent Guidance files (ignored per project rules)
+GEMINI.md
+Agent.MD
+
+# Environment & local secrets
+.env
+.venv/
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+dist/
+build/
+*.egg-info/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+.google-agents-cli/
+app/.adk/
+scratch*.py
+deployment_metadata.json
