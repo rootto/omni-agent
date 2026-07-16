@@ -48,6 +48,6 @@ sed -i "s/^GCS_BUCKET_NAME=.*/GCS_BUCKET_NAME=$ARTIFACTS_BUCKET/" .env
 agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"
 
 # Publish to the targeted Gemini Enterprise App Instance to make the agent visible in the environment.
-APP_ID="projects/663586531150/locations/global/collections/default_collection/engines/$INSTANCE"
+APP_ID="${GEMINI_ENTERPRISE_APP_ID:-projects/663586531150/locations/global/collections/default_collection/engines/$INSTANCE}"
 echo "🔗 Publishing Agent to Gemini Enterprise..."
 agents-cli publish gemini-enterprise --project "$PROJECT" --gemini-enterprise-app-id "$APP_ID"
