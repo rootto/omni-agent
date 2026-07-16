@@ -193,21 +193,19 @@ async def video_generation_tool(
         if tool_context:
             if getattr(tool_context, "session", None) and getattr(tool_context.session, "state", None) is not None:
                 tool_context.session.state["previous_interaction_id"] = None
-                tool_context.session.state["previous_interaction_steps"] = None
             elif getattr(tool_context, "state", None) is not None:
                 tool_context.state["previous_interaction_id"] = None
-                tool_context.state["previous_interaction_steps"] = None
 
 
-    steps = None
+    previous_interaction_id = None
     if edit_previous_video and tool_context:
         if getattr(tool_context, "session", None) and getattr(tool_context.session, "state", None) is not None:
-            steps = tool_context.session.state.get("previous_interaction_steps")
+            previous_interaction_id = tool_context.session.state.get("previous_interaction_id")
         elif getattr(tool_context, "state", None) is not None:
-            steps = tool_context.state.get("previous_interaction_steps")
+            previous_interaction_id = tool_context.state.get("previous_interaction_id")
         
-        if not steps:
-            logger.warning("[video_generation_tool] edit_previous_video=True but no previous steps found. Falling back to new video.")
+        if not previous_interaction_id:
+            logger.warning("[video_generation_tool] edit_previous_video=True but no previous_interaction_id found. Falling back to new video.")
             edit_previous_video = False
 
     generation_config = None
@@ -219,17 +217,8 @@ async def video_generation_tool(
             }
         }
 
-    if edit_previous_video and steps:
-        new_step = {
-            "type": "user_input",
-            "content": [
-                {
-                    "type": "text",
-                    "text": prompt
-                }
-            ]
-        }
-        input_data = list(steps) + [new_step]
+    if edit_previous_video and previous_interaction_id:
+        input_data = prompt
     else:
         if file_ref:
             # Use resolved file_mime_type if found, otherwise guess
@@ -271,14 +260,18 @@ async def video_generation_tool(
 
     # Invoke interactions API
     try:
-        interaction = client.interactions.create(
-            model=omni_model,
-            input=input_data,
-            generation_config=generation_config,
-        )
+        kwargs = {
+            "model": omni_model,
+            "input": input_data,
+            "generation_config": generation_config,
+        }
+        if edit_previous_video and previous_interaction_id:
+            kwargs["previous_interaction_id"] = previous_interaction_id
+            
+        interaction = client.interactions.create(**kwargs)
     except Exception as e:
         err_msg = str(e)
-        if "The prompt could not be processed" in err_msg or "invalid_request" in err_msg or "400" in err_msg or "SAFETY" in err_msg.upper():
+        if "The prompt could not be processed" in err_msg or "SAFETY" in err_msg.upper():
             logger.error("[video_generation_tool] Video generation blocked by safety/policy filters: %s", e)
             return (
                 "Error: The video generation model blocked your request due to safety/policy filters.\n\n"
