@@ -361,28 +361,14 @@ async def video_generation_tool(
     )
     version = await tool_context.save_artifact(filename=filename, artifact=video_part)
 
-    # Load previous steps
-    prev_steps = []
-    if edit_previous_video and steps:
-        prev_steps = list(steps)
-
-    # Save interaction ID and serialized steps to the session state
-    serialized_steps = list(prev_steps)
-    for step in interaction.steps:
-        if hasattr(step, "model_dump"):
-            serialized_steps.append(step.model_dump())
-        else:
-            serialized_steps.append(step)
-
-    if tool_context:
+    # Save interaction ID to the session state for multi-turn stateful edits
+    if getattr(interaction, "id", None) and tool_context:
         if getattr(tool_context, "session", None) and getattr(tool_context.session, "state", None) is not None:
             tool_context.session.state["previous_interaction_id"] = interaction.id
-            tool_context.session.state["previous_interaction_steps"] = serialized_steps
         elif getattr(tool_context, "state", None) is not None:
             tool_context.state["previous_interaction_id"] = interaction.id
-            tool_context.state["previous_interaction_steps"] = serialized_steps
             
-    logger.info("[video_generation_tool] Saved to tool_context.state: previous_interaction_id=%s, count(previous_interaction_steps)=%d", interaction.id, len(serialized_steps))
+        logger.info("[video_generation_tool] Saved to tool_context.state: previous_interaction_id=%s", interaction.id)
 
     # Retrieve the canonical URI of the saved artifact for logging
     artifact_version = await tool_context.get_artifact_version(filename, version=version)
