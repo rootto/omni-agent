@@ -22,3 +22,7 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+.google-agents-cli/
+app/.adk/
+scratch*.py
+deployment_metadata.json
