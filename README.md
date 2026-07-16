@@ -34,6 +34,12 @@ Install `agents-cli` and its skills if not already installed:
 uvx google-agents-cli setup
 ```
 
+Copy the `.env.example` file to create your own local `.env` configuration file, and populate the placeholder fields like "MY_GOOGLE_PROJECT" and "MY_GEAPP_BUCKET" with your actual Google Cloud Project and Storage Bucket values.
+
+```bash
+cp .env.example .env
+```
+
 Install required packages:
 
 ```bash
