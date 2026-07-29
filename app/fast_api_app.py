@@ -44,13 +44,11 @@ AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.agent import app as adk_app
     from app.agent import root_agent
-    from app.plugins import FileDataResolverPlugin
 
     runner = Runner(
         app=adk_app,
         session_service=services.get_session_service(),
         artifact_service=services.get_artifact_service(),
-        plugins=[FileDataResolverPlugin()],
         auto_create_session=True,
     )
     app.state.runner = runner

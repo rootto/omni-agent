@@ -66,7 +66,7 @@ clean_deployments() {
             if [ -n "$re" ]; then
                 echo "Deleting Reasoning Engine: $re"
                 curl -s -X DELETE -H "Authorization: Bearer $token" \
-                    "https://${REGION}-aiplatform.googleapis.com/v1/${re}" > /dev/null
+                    "https://${REGION}-aiplatform.googleapis.com/v1/${re}?force=true" > /dev/null
             fi
         done
         echo "Reasoning Engine deletion requests submitted."

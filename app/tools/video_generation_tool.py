@@ -7,6 +7,7 @@ import tempfile
 import logging
 from typing import Optional
 from urllib.parse import urlparse
+import httpx
 from google.cloud import storage
 
 from google.adk.tools import ToolContext, FunctionTool
@@ -38,7 +39,8 @@ else:
         logger.info("Static binaries not found in %s. Downloading from GCS...", BIN_DIR)
         
         storage_client = storage.Client()
-        bucket = storage_client.bucket("geapp_agents_storage")
+        bucket_name = os.environ.get("GCS_BUCKET_NAME", "geapp_agents_storage")
+        bucket = storage_client.bucket(bucket_name)
         
         # Download ffmpeg
         if not os.path.exists(FFMPEG_PATH):
@@ -153,7 +155,8 @@ async def process_chunk(
                     client.interactions.create,
                     model=omni_model,
                     input=input_data,
-                    generation_config=generation_config
+                    generation_config=generation_config,
+                    timeout=httpx.Timeout(600.0, connect=60.0),
                 )
                 
                 video_bytes = None
@@ -307,8 +310,8 @@ async def _generate_or_edit_video_impl(
     ensure_binaries()
 
     import os
-    os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+    os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
+    os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
 
     from google import genai
     
@@ -323,7 +326,7 @@ async def _generate_or_edit_video_impl(
             timeout=600 * 1000,  # 10 minutes (600,000 milliseconds)
         )
     )
-    omni_model = "gemini-omni-flash-preview"
+    omni_model = os.environ.get("OMNI_MODEL_ID", "gemini-omni-flash-preview")
 
     # Auto-map generated_video.mp4 edits to edit_previous_video = True
     uris_to_process = []
@@ -520,6 +523,7 @@ async def _generate_or_edit_video_impl(
             model=omni_model,
             input=input_data,
             generation_config=generation_config,
+            timeout=httpx.Timeout(600.0, connect=60.0),
         )
     except Exception as e:
         err_msg = str(e)
