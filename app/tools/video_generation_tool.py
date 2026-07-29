@@ -56,6 +56,15 @@ else:
             os.chmod(FFPROBE_PATH, 0o755)
             logger.info("ffprobe downloaded and made executable.")
 
+def _generate_signed_url(gcs_uri: str) -> str:
+    """Generates an authenticated HTTPS download URL for a GCS URI."""
+    if not gcs_uri.startswith("gs://"):
+        return gcs_uri
+    parsed = urlparse(gcs_uri)
+    bucket_name = parsed.netloc
+    object_path = parsed.path.lstrip('/')
+    return f"https://storage.googleapis.com/{bucket_name}/{object_path}"
+
 def get_video_duration(local_path: str) -> float:
     """Gets duration of a local video file using ffprobe."""
     cmd = [
@@ -201,7 +210,7 @@ async def process_chunk(
                 await asyncio.sleep(2 * (attempt + 1))
 
 
-async def ensure_local_video_path(video_ref: str, tool_context: ToolContext, client) -> str:
+async def ensure_local_file_path(video_ref: str, tool_context: ToolContext, client) -> str:
     """Resolves GCS, Files API, or artifact references to a local video file path."""
     if video_ref.startswith("file://"):
         video_ref = video_ref.replace("file://", "", 1)
@@ -216,7 +225,7 @@ async def ensure_local_video_path(video_ref: str, tool_context: ToolContext, cli
         if video_ref in mappings:
             mapped_uri = mappings[video_ref]
             logger.info("Resolved display name %s to GCS URI %s via session state mapping", video_ref, mapped_uri)
-            return await ensure_local_video_path(mapped_uri, tool_context, client)
+            return await ensure_local_file_path(mapped_uri, tool_context, client)
 
     if video_ref.startswith("gs://"):
         parsed = urlparse(video_ref)
@@ -252,22 +261,24 @@ async def ensure_local_video_path(video_ref: str, tool_context: ToolContext, cli
             try:
                 artifact_version = await tool_context.get_artifact_version(basename)
                 canonical_uri = artifact_version.canonical_uri
-                return await ensure_local_video_path(canonical_uri, tool_context, client)
+                return await ensure_local_file_path(canonical_uri, tool_context, client)
             except Exception as ae:
                 raise ValueError(f"Could not resolve Files API reference or artifact: {video_ref}") from ae
 
     try:
         artifact_version = await tool_context.get_artifact_version(video_ref)
         canonical_uri = artifact_version.canonical_uri
-        return await ensure_local_video_path(canonical_uri, tool_context, client)
+        return await ensure_local_file_path(canonical_uri, tool_context, client)
     except Exception as e:
         basename = video_ref.split("/")[-1]
         try:
             artifact_version = await tool_context.get_artifact_version(basename)
             canonical_uri = artifact_version.canonical_uri
-            return await ensure_local_video_path(canonical_uri, tool_context, client)
+            return await ensure_local_file_path(canonical_uri, tool_context, client)
         except Exception as ae:
             raise ValueError(f"Could not resolve video reference: {video_ref}") from ae
+
+ensure_local_video_path = ensure_local_file_path
 
 
 async def _generate_or_edit_video_impl(
@@ -277,6 +288,7 @@ async def _generate_or_edit_video_impl(
     tool_context: ToolContext = None,
     task: Optional[str] = None,
     file_uris: Optional[list[str]] = None,
+    aspect_ratio: str = "16:9",
 ) -> str:
     """Generates a new video or edits an existing/uploaded video using the stateful interactions API with Gemini Omni Flash.
 
@@ -411,26 +423,26 @@ async def _generate_or_edit_video_impl(
             canonical_uri = artifact_version.canonical_uri
             
             if canonical_uri.startswith("gs://"):
-                parsed = urlparse(canonical_uri)
-                bucket_name = parsed.netloc
-                object_path = parsed.path.lstrip('/')
-                http_url = f"https://storage.googleapis.com/{bucket_name}/{object_path}"
-                return f"Video generated successfully!\n\nSaved to GCS: ![{filename}]({canonical_uri})\n\nDownload Video: {http_url}"
+                http_url = _generate_signed_url(canonical_uri)
+                return f"Video generated successfully!\n\nSaved to GCS: ![{filename}]({canonical_uri})\n\nDownload Video: {http_url}\nAspect Ratio: {aspect_ratio}"
             else:
-                return f"Video generated successfully!\n\nSaved to artifacts: ![{filename}](artifact://{filename}?version={version})\nDownload Video: artifact://{filename}?version={version}"
+                return f"Video generated successfully!\n\nSaved to artifacts: ![{filename}](artifact://{filename}?version={version})\nDownload Video: artifact://{filename}?version={version}\nAspect Ratio: {aspect_ratio}"
 
     # Handle Standard Video Flow (<=10s or new generation)
     state_keys = list(tool_context.session.state.to_dict().keys()) if hasattr(tool_context.session.state, "to_dict") else list(tool_context.session.state.keys()) if hasattr(tool_context.session.state, "keys") else []
     logger.info("[generate_or_edit_video] edit_previous_video=%s, tool_context.session.state keys: %s", edit_previous_video, state_keys)
     logger.info("[generate_or_edit_video] previous_interaction_id: %s, previous_interaction_steps exists: %s", tool_context.session.state.get("previous_interaction_id") if tool_context.session.state else None, "previous_interaction_steps" in tool_context.session.state if tool_context.session.state else False)
     steps = None
-    if edit_previous_video:
+    previous_interaction_id = None
+    if edit_previous_video and tool_context and hasattr(tool_context, "session") and tool_context.session and tool_context.session.state:
         steps = tool_context.session.state.get("previous_interaction_steps")
-        if not steps:
+        previous_interaction_id = tool_context.session.state.get("previous_interaction_id")
+        if not steps or not previous_interaction_id:
             logger.warning(
-                "[generate_or_edit_video] edit_previous_video=True but no previous steps found in session. Falling back to new video."
+                "[generate_or_edit_video] edit_previous_video=True but no previous steps or interaction ID found in session. Falling back to new video."
             )
             edit_previous_video = False
+            previous_interaction_id = None
 
     generation_config = None
     if edit_previous_video and steps:
@@ -609,13 +621,10 @@ async def _generate_or_edit_video_impl(
     canonical_uri = artifact_version.canonical_uri
 
     if canonical_uri.startswith("gs://"):
-        parsed = urlparse(canonical_uri)
-        bucket_name = parsed.netloc
-        object_path = parsed.path.lstrip('/')
-        http_url = f"https://storage.googleapis.com/{bucket_name}/{object_path}"
-        return f"Video generated successfully!\n\nSaved to GCS: ![{filename}]({canonical_uri})\n\nDownload Video: {http_url}"
+        http_url = _generate_signed_url(canonical_uri)
+        return f"Video generated successfully!\n\nSaved to GCS: ![{filename}]({canonical_uri})\n\nDownload Video: {http_url}\nAspect Ratio: {aspect_ratio}"
     else:
-        return f"Video generated successfully!\n\nSaved to artifacts: ![{filename}](artifact://{filename}?version={version})\nDownload Video: artifact://{filename}?version={version}"
+        return f"Video generated successfully!\n\nSaved to artifacts: ![{filename}](artifact://{filename}?version={version})\nDownload Video: artifact://{filename}?version={version}\nAspect Ratio: {aspect_ratio}"
         
 async def video_generation_tool(
     prompt: str,
@@ -657,7 +666,7 @@ async def video_generation_tool(
     diag_str = " | ".join(diag_parts)
 
     try:
-        res = await _generate_or_edit_video_impl(prompt, edit_previous_video, video_to_edit, tool_context, task, file_uris)
+        res = await _generate_or_edit_video_impl(prompt, edit_previous_video, video_to_edit, tool_context, task, file_uris, aspect_ratio=aspect_ratio or "16:9")
         return f"{res}\n\n---\n**Debug Diagnostics:** `{diag_str}`"
     except Exception as e:
         logger.error("[generate_or_edit_video] Failed: %s", e)
