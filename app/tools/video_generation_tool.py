@@ -501,15 +501,18 @@ async def _generate_or_edit_video_impl(
                 "text": prompt
             })
             
-            generation_config = {}
-            if (task == "edit" and has_video):
-                generation_config = {
-                    "video_config": {
-                        "task": "edit",
-                    }
-                }
+            video_config = {}
+            if task == "edit" and has_video:
+                video_config["task"] = "edit"
+            if aspect_ratio and aspect_ratio in ["16:9", "9:16"]:
+                video_config["aspect_ratio"] = aspect_ratio
+            generation_config = {"video_config": video_config} if video_config else None
         else:
             input_data = prompt
+            video_config = {}
+            if aspect_ratio and aspect_ratio in ["16:9", "9:16"]:
+                video_config["aspect_ratio"] = aspect_ratio
+            generation_config = {"video_config": video_config} if video_config else None
 
     # Invoke interactions API
     try:
