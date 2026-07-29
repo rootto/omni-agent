@@ -508,22 +508,30 @@ async def _generate_or_edit_video_impl(
         )
     except Exception as e:
         err_msg = str(e)
-        if "The prompt could not be processed" in err_msg or "invalid_request" in err_msg or "400" in err_msg:
-            logger.error("[generate_or_edit_video] Video generation blocked by safety/policy filters: %s", e)
-            return (
-                "Error: The video generation model blocked your request due to safety/policy filters.\n\n"
-                "### Why did this happen?\n"
-                "Creative video generation models have strict guardrails regarding deepfakes and sensitive healthcare content. "
-                "This issue was likely triggered by one of the following:\n"
-                "1. **Deepfake Prevention Policy**: Requests containing terms like 'anchor', 'host', 'presenter', 'speaker', or 'person' (asking the model to generate a human being speaking).\n"
-                "2. **Sensitive Medical Content Filters**: Direct usage of technical medical terms (like 'cancer', 'oncology', 'ovarian', or 'tumor') in the visual generation description.\n\n"
-                "### How to fix it (Human-in-the-Loop):\n"
-                "Please update your request message to:\n"
-                "- Avoid requesting human presenters or anchors. Instead, ask for **abstract design styles**, **kinetic typography**, **clean sliding transitions**, **data infographics**, or **motion graphics**.\n"
-                "- Replace technical medical terms in the visual description with neutral placeholder metaphors (e.g. 'therapeutic access' instead of 'oncology/cancer funding', 'specialized diagnostic cohort' instead of 'ovarian cancer screening')."
-            )
-        else:
-            raise e
+        logger.error("[generate_or_edit_video] Video generation raised an exception: %s", err_msg)
+        
+        # Check for Safety/Policy Blocks (Deepfakes, Restricted Individuals, etc.)
+        if "restricted individuals" in err_msg.lower() or "safety" in err_msg.lower() or "content_blocked" in err_msg.lower():
+            if "output contains" in err_msg.lower():
+                # Hallucination block (the video model hallucinated a restricted entity and it was blocked prior to returning)
+                return (
+                    "Error: The video generation model successfully compiled the prompt, but the resulting video output triggered the safety/policy filters and was blocked.\n\n"
+                    "### Why did this happen?\n"
+                    "Even if your prompt was innocent (e.g. 'a cat playing with yarn'), the model may have hallucinated a human face or a restricted public figure in the background. When the video was finalized, Google's output filters caught it and rejected the entire clip.\n\n"
+                    "### How to fix it:\n"
+                    "Ask me to retry the exact same prompt (generation is non-deterministic, so a second try often passes), or add explicit instructions to your prompt to exclude humans (e.g. 'no people, only animals, close up shot')."
+                )
+            else:
+                return (
+                    "Error: The video generation model blocked your input prompt due to safety/policy filters.\n\n"
+                    "### Why did this happen?\n"
+                    "Creative video generation models have strict guardrails regarding deepfakes. This issue was triggered because your input likely contained terms referencing humans (e.g., 'anchor', 'person') alongside animation requests.\n\n"
+                    "### How to fix it:\n"
+                    "Please update your request message to rely on abstract design styles or neutral placeholder metaphors."
+                )
+        
+        # Generic 400 errors or timeout that are NOT safety related shouldn't be masked
+        raise e
 
     # Extract model output video part
     video_part = None

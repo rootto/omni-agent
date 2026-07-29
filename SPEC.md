@@ -57,6 +57,8 @@ The Main Agent automatically detects user intent from input modalities and conve
 * **Video-to-Video / Stateful Edit (`edit`):**
   * *Follow-up turn:* `video_generation_tool` reads stored `previous_interaction_id` directly from the **ADK Session Service** to refine the previously generated video.
   * *Uploaded file:* Resolves GCS URI (`gs://...`) for uploaded user video and applies prompt instructions.
+* **Video Extension (`extend_video`) — [NOT YET IMPLEMENTED]:**
+  * Identifies intent to extend a video, either by taking a recently created video (via `previous_interaction_id`) or an uploaded video file (via GCS URI). Blocked by pending API support.
 
 ### 3.2 Asset Generation Prompt Rewriting Gate (HITL)
 When the user requests **asset creation/generation** (`text_to_video`, `image_to_video`, `reference_to_video`), the Main Agent inspects prompt detail across subject, camera movement, and lighting:
@@ -80,7 +82,7 @@ The Main Agent calls `video_generation_tool` with an explicit, strongly typed pa
 ```python
 def video_generation_tool(
     prompt: str,
-    task: str,  # "text_to_video", "image_to_video", "reference_to_video", or "edit"
+    task: str,  # "text_to_video", "image_to_video", "reference_to_video", "edit", or "extend_video"
     aspect_ratio: str = "16:9",  # "16:9" (default landscape) or "9:16" (portrait)
     file_uris: list[str] | None = None,  # Resolved GCS URIs (gs://...) for reference files
     tool_context: ToolContext = None,
@@ -130,3 +132,4 @@ The project lifecycle conforms strictly to standard Agent CLI (`google-agents-cl
 | **CUJ-4** | **Uploaded Video Edit** | User uploads local test video (`tests/fixtures/sample_video.mp4` from Veo 3) + prompt *"Add cinematic zoom"*. | Local file uploaded; Agent passes resolved cloud URI to `video_generation_tool` (`edit`); stores `interaction.id` in ADK Session Service; returns dual-link output. |
 | **CUJ-5** | **Asset Prompt Rewrite Gate** | User requests asset generation with brief prompt *"make a car video"*. | Main Agent intercepts; presents enriched rewrite + 3-way HITL choice (*Re-written / Original / Amend*). |
 | **CUJ-6** | **Safety Block Handling** | User enters prompt triggering `FINISH_REASON_SAFETY`. | Tool catches API exception and reports exact safety feedback cleanly without retrying or crashing. |
+| **CUJ-7** | **Video Extension (Not Implemented)** | User uploads a video or asks to extend their recently generated video (e.g., *"Make this 5 seconds longer"*). | Main Agent invokes `video_generation_tool` (`extend_video`), handling either an uploaded file or the `previous_interaction_id`. *(Note: Pending API support).* |
