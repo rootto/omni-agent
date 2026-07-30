@@ -391,7 +391,8 @@ async def _generate_or_edit_video_impl(
 
     # Handle Large Video Flow (>10s)
     if is_large_video:
-        local_video_path = local_file_paths[0]
+        if local_file_paths:
+            local_video_path = local_file_paths[0]
         logger.info("Processing large video of %.2fs by splitting into chunks...", duration)
         with tempfile.TemporaryDirectory() as temp_dir:
             chunks = split_video(local_video_path, temp_dir)
