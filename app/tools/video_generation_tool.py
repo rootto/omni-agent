@@ -39,7 +39,7 @@ else:
         logger.info("Static binaries not found in %s. Downloading from GCS...", BIN_DIR)
         
         storage_client = storage.Client()
-        bucket_name = os.environ.get("GCS_BUCKET_NAME", "geapp_agents_storage")
+        bucket_name = os.environ.get("BINARIES_BUCKET_NAME", "geapp_agents_storage")
         bucket = storage_client.bucket(bucket_name)
         
         # Download ffmpeg
