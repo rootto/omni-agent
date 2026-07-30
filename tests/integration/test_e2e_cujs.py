@@ -24,6 +24,7 @@ from google.genai import types
 
 from app import config
 from app.tools.video_generation_tool import video_generation_tool
+from app.tools.storyboard_generation_tool import generate_storyboard, update_storyboard
 
 
 class DummySession:
@@ -330,6 +331,74 @@ async def test_e2e_cuj4_uploaded_video_edit_standard() -> None:
     assert response.status_code == 200
     video_bytes_out = response.content
     assert len(video_bytes_out) > 50000
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(900)
+async def test_e2e_cuj8_storyboard_to_multi_video() -> None:
+    """Verifies CUJ-8 Long-Content Storyboard to Multi-Video Generation by:
+    1. Reading sample_long_storyboard_prompt.txt test fixture.
+    2. Decomposing it into a structured storyboard via generate_storyboard (Gemini Flash 3.6).
+    3. Performing a targeted board update via update_storyboard without regenerating unchanged boards.
+    4. Generating multiple video clips in a loop via generate_storyboard_videos and verifying session state tracking.
+    """
+    from app.tools.storyboard_generation_tool import generate_storyboard_videos
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    fixture_path = project_root / "tests" / "fixtures" / "sample_long_storyboard_prompt.txt"
+    assert fixture_path.exists(), f"Long storyboard prompt fixture not found at {fixture_path}"
+
+    long_prompt = fixture_path.read_text()
+    bucket_name = config.get_gcs_bucket_name()
+    tool_context = DummyToolContext(bucket_name)
+
+    # 1. Generate Storyboard with Gemini Flash 3.6
+    storyboard = await generate_storyboard(
+        prompt=long_prompt,
+        max_boards=10,
+        tool_context=tool_context,
+    )
+    assert "style_summary" in storyboard
+    assert "overall_video_creation_plan" in storyboard
+    assert "boards" in storyboard
+    assert len(storyboard["boards"]) >= 2
+    assert tool_context.session.state.get("current_storyboard") == storyboard
+
+    # Check rich cinematography fields on the first board
+    board_0 = storyboard["boards"][0]
+    assert "visual_representation" in board_0
+    assert "camera_movement" in board_0
+    assert "lighting_and_color" in board_0
+    assert "narrative" in board_0
+
+    # 2. Update a targeted board
+    updated_storyboard = await update_storyboard(
+        board_index=2,
+        duration_seconds=8.0,
+        tool_context=tool_context,
+    )
+    assert updated_storyboard["boards"][1]["duration_seconds"] == 8.0
+
+    # Slice to first 2 boards for E2E speed while verifying multi-video loop execution
+    tool_context.session.state["current_storyboard"]["boards"] = updated_storyboard["boards"][:2]
+
+    # 3. Generate videos in a loop across all boards
+    output = await generate_storyboard_videos(
+        aspect_ratio="16:9",
+        tool_context=tool_context,
+    )
+
+    assert "Generated Storyboard Videos (2 Boards)" in output
+    assert "Overall Video Creation Plan:" in output
+    assert "Board 1" in output
+    assert "Board 2" in output
+    assert "generated_video_board_1.mp4" in output
+    assert "generated_video_board_2.mp4" in output
+    assert "![generated_video_board_1.mp4](gs://" in output
+    assert "![generated_video_board_2.mp4](gs://" in output
+
+    storyboard_ids = tool_context.session.state.get("storyboard_interaction_ids")
+    assert isinstance(storyboard_ids, list) and len(storyboard_ids) >= 2
 
 
 

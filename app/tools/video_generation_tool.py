@@ -62,13 +62,173 @@ def _generate_signed_url(gcs_uri: str) -> str:
     """Generates an authenticated HTTPS download URL for a GCS URI."""
     if not gcs_uri.startswith("gs://"):
         return gcs_uri
-    parsed = urlparse(gcs_uri)
+    import urllib.parse
+    parsed = urllib.parse.urlparse(gcs_uri)
     bucket_name = parsed.netloc
     object_path = parsed.path.lstrip('/')
-    return f"https://storage.googleapis.com/{bucket_name}/{object_path}"
+    
+    # Attempt V4 signed URL valid for 7 days using IAM signBlob when on ADC credentials
+    try:
+        import datetime
+        import google.auth
+        from google.auth.transport.requests import Request
+        credentials, _ = google.auth.default()
+        if not credentials.valid:
+            credentials.refresh(Request())
+        
+        sa_email = getattr(credentials, "service_account_email", None)
+        if not sa_email:
+            import urllib.request
+            try:
+                req = urllib.request.Request(
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                    headers={"Metadata-Flavor": "Google"}
+                )
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    sa_email = resp.read().decode("utf-8").strip()
+            except Exception:
+                sa_email = "service-687484203981@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+
+        client = storage.Client(credentials=credentials)
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_path)
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(days=7),
+            method="GET",
+            service_account_email=sa_email,
+            access_token=credentials.token,
+        )
+    except Exception as e:
+        logger.warning("Could not generate V4 signed URL for %s via IAM signBlob (%s). Using URL-encoded storage.cloud.google.com URL.", gcs_uri, e)
+        encoded_path = urllib.parse.quote(object_path, safe='/')
+        return f"https://storage.cloud.google.com/{bucket_name}/{encoded_path}"
+
+def has_audio_stream(local_path: str) -> bool:
+    """Checks if a video file has an audio stream using ffprobe."""
+    ensure_binaries()
+    cmd = [
+        FFPROBE_PATH,
+        "-v", "error",
+        "-select_streams", "a",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        local_path
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return "audio" in res.stdout.lower()
+
+def merge_storyboard_clips(video_paths: list[str], output_path: str) -> None:
+    """Concatenates independent storyboard video clips into a single continuous MP4 file.
+    
+    Normalizes each clip into an MPEG-TS intermediate file with consistent H.264 video
+    and stereo AAC audio (injecting silent audio if missing) to ensure monotonic timestamps
+    and prevent players from cutting off early.
+    """
+    ensure_binaries()
+    temp_dir = os.path.dirname(output_path)
+    ts_files = []
+    total_input_duration = 0.0
+
+    for idx, chunk_path in enumerate(video_paths, start=1):
+        try:
+            dur = get_video_duration(chunk_path)
+        except Exception as e:
+            dur = 10.0
+            logger.warning("[merge_storyboard_clips] Could not read duration for %s: %s", chunk_path, e)
+        
+        total_input_duration += dur
+        has_audio = has_audio_stream(chunk_path)
+        logger.warning("[merge_storyboard_clips] Clip %d/%d (%s): duration=%.2fs, has_audio=%s", idx, len(video_paths), chunk_path, dur, has_audio)
+        
+        ts_path = os.path.join(temp_dir, f"norm_clip_{idx:03d}.ts")
+        
+        if has_audio:
+            cmd_norm = [
+                FFMPEG_PATH,
+                "-y",
+                "-i", chunk_path,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-r", "24",
+                "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
+                "-f", "mpegts",
+                ts_path
+            ]
+        else:
+            cmd_norm = [
+                FFMPEG_PATH,
+                "-y",
+                "-i", chunk_path,
+                "-f", "lavfi",
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-r", "24",
+                "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
+                "-shortest",
+                "-f", "mpegts",
+                ts_path
+            ]
+            
+        logger.warning("[merge_storyboard_clips] Normalizing clip %d to MPEG-TS: %s", idx, " ".join(cmd_norm))
+        res_norm = subprocess.run(cmd_norm, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res_norm.returncode != 0:
+            logger.warning("[merge_storyboard_clips] Normalization failed for clip %d (rc=%d): %s. Retrying with fallback synthetic audio...", idx, res_norm.returncode, res_norm.stderr.decode('utf-8', errors='ignore'))
+            cmd_fallback = [
+                FFMPEG_PATH,
+                "-y",
+                "-i", chunk_path,
+                "-f", "lavfi",
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-r", "24",
+                "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
+                "-shortest",
+                "-f", "mpegts",
+                ts_path
+            ]
+            res_fb = subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if res_fb.returncode != 0:
+                logger.error("[merge_storyboard_clips] Fallback normalization failed for clip %d (rc=%d): %s", idx, res_fb.returncode, res_fb.stderr.decode('utf-8', errors='ignore'))
+                raise RuntimeError(f"ffmpeg normalization failed for clip {idx}: {res_fb.stderr.decode('utf-8', errors='ignore')}")
+            
+        ts_files.append(ts_path)
+
+    # Concatenate all MPEG-TS files into final MP4
+    ts_list_str = "concat:" + "|".join(ts_files)
+    cmd_concat = [
+        FFMPEG_PATH,
+        "-y",
+        "-i", ts_list_str,
+        "-c", "copy",
+        "-bsf:a", "aac_adtstoasc",
+        output_path
+    ]
+    logger.warning("[merge_storyboard_clips] Concatenating %d TS files into %s: %s", len(ts_files), output_path, " ".join(cmd_concat))
+    res_concat = subprocess.run(cmd_concat, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res_concat.returncode != 0:
+        logger.error("[merge_storyboard_clips] TS concat failed (rc=%d): %s", res_concat.returncode, res_concat.stderr.decode('utf-8', errors='ignore'))
+        raise RuntimeError(f"ffmpeg TS concat failed: {res_concat.stderr.decode('utf-8', errors='ignore')}")
+
+    try:
+        merged_dur = get_video_duration(output_path)
+        logger.warning("[merge_storyboard_clips] SUCCESS: Merged %d clips into %s. Total input duration=%.2fs, Merged duration=%.2fs", len(video_paths), output_path, total_input_duration, merged_dur)
+        if merged_dur < (total_input_duration * 0.8):
+            logger.error("[merge_storyboard_clips] WARNING: Merged video duration (%.2fs) is shorter than expected total input duration (%.2fs)!", merged_dur, total_input_duration)
+    except Exception as e:
+        logger.warning("[merge_storyboard_clips] Could not verify final merged duration: %s", e)
 
 def get_video_duration(local_path: str) -> float:
     """Gets duration of a local video file using ffprobe."""
+    ensure_binaries()
     cmd = [
         FFPROBE_PATH,
         "-v", "error",
@@ -76,12 +236,13 @@ def get_video_duration(local_path: str) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1",
         local_path
     ]
-    logger.info("Running ffprobe: %s", " ".join(cmd))
+    logger.warning("Running ffprobe: %s", " ".join(cmd))
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
     return float(result.stdout.strip())
 
 def split_video(local_path: str, temp_dir: str) -> list[str]:
     """Splits a video into chunks of up to 10 seconds without re-encoding."""
+    ensure_binaries()
     output_pattern = os.path.join(temp_dir, "chunk_%03d.mp4")
     cmd = [
         FFMPEG_PATH,
@@ -103,7 +264,8 @@ def split_video(local_path: str, temp_dir: str) -> list[str]:
     return chunks
 
 def concat_videos(edited_chunks: list[str], output_path: str) -> None:
-    """Concatenates video segments using ffmpeg concat demuxer."""
+    """Concatenates video segments using ffmpeg concat demuxer with fallback re-encoding."""
+    ensure_binaries()
     temp_dir = os.path.dirname(output_path)
     list_file_path = os.path.join(temp_dir, "concat_list.txt")
     
@@ -122,7 +284,20 @@ def concat_videos(edited_chunks: list[str], output_path: str) -> None:
         output_path
     ]
     logger.info("Running ffmpeg concat: %s", " ".join(cmd))
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode != 0:
+        logger.warning("ffmpeg concat with -c copy failed (rc=%d). Falling back to re-encoding concat.", res.returncode)
+        cmd_reencode = [
+            FFMPEG_PATH,
+            "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", list_file_path,
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            output_path
+        ]
+        subprocess.run(cmd_reencode, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 async def process_chunk(
     chunk_path: str,
@@ -240,9 +415,17 @@ async def ensure_local_file_path(video_ref: str, tool_context: ToolContext, clie
             return "/" + blob_name
             
         temp_dir = tempfile.gettempdir()
-        local_path = os.path.join(temp_dir, os.path.basename(blob_name))
+        parts = blob_name.rstrip("/").split("/")
+        if len(parts) >= 2 and parts[-1].isdigit():
+            clean_name = f"{parts[-2]}_v{parts[-1]}"
+        else:
+            clean_name = parts[-1]
+        if not clean_name.endswith((".mp4", ".mov", ".avi", ".webm")):
+            clean_name += ".mp4"
+            
+        local_path = os.path.join(temp_dir, clean_name)
         
-        logger.info("Downloading %s to local path %s", video_ref, local_path)
+        logger.warning("Downloading GCS artifact %s to unique local path %s", video_ref, local_path)
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
@@ -292,6 +475,7 @@ async def _generate_or_edit_video_impl(
     task: Optional[str] = None,
     file_uris: Optional[list[str]] = None,
     aspect_ratio: str = "16:9",
+    board_index: Optional[int] = None,
 ) -> str:
     """Generates a new video or edits an existing/uploaded video using the stateful interactions API with Gemini Omni Flash.
 
@@ -299,13 +483,21 @@ async def _generate_or_edit_video_impl(
         prompt: Description of the video to generate, or edits to apply.
         edit_previous_video: Set to True to edit the previously generated video in this session.
         video_to_edit: Optional file path or GCS URI of a new uploaded video to edit.
+        board_index: Optional 1-indexed board number when generating a storyboard video clip.
     """
     logger.info(
-        "[generate_or_edit_video] prompt=%s, edit_previous=%s, video_to_edit=%s",
+        "[generate_or_edit_video] prompt=%s, edit_previous=%s, video_to_edit=%s, board_index=%s",
         prompt,
         edit_previous_video,
         video_to_edit,
+        board_index,
     )
+
+    if board_index is not None and tool_context and tool_context.session and tool_context.session.state is not None:
+        storyboard_ids = tool_context.session.state.get("storyboard_interaction_ids", [])
+        if edit_previous_video and isinstance(storyboard_ids, list) and 1 <= board_index <= len(storyboard_ids):
+            tool_context.session.state["previous_interaction_id"] = storyboard_ids[board_index - 1]
+            logger.info("[generate_or_edit_video] Set previous_interaction_id to storyboard board %d ID: %s", board_index, storyboard_ids[board_index - 1])
 
     ensure_binaries()
 
@@ -528,14 +720,26 @@ async def _generate_or_edit_video_impl(
         )
     except Exception as e:
         err_msg = str(e)
-        logger.error("[generate_or_edit_video] Video generation raised an exception: %s", err_msg)
+        logger.error(
+            "[generate_or_edit_video] Video generation raised an exception: %s | FULL PROMPT: %r",
+            err_msg,
+            prompt,
+        )
         
-        # Check for Safety/Policy Blocks (Deepfakes, Restricted Individuals, etc.)
-        if "restricted individuals" in err_msg.lower() or "safety" in err_msg.lower() or "content_blocked" in err_msg.lower():
+        # Check for Safety/Policy Blocks (Deepfakes, Restricted Individuals, Responsible AI, etc.)
+        if any(term in err_msg.lower() for term in [
+            "restricted individuals",
+            "safety",
+            "content_blocked",
+            "responsible ai",
+            "violates",
+            "invalid_request",
+        ]):
+            prefix = f"[Board {board_index} Safety Block] " if board_index is not None else ""
             if "output contains" in err_msg.lower():
                 # Hallucination block (the video model hallucinated a restricted entity and it was blocked prior to returning)
                 return (
-                    "Error: The video generation model successfully compiled the prompt, but the resulting video output triggered the safety/policy filters and was blocked.\n\n"
+                    f"{prefix}Error: The video generation model successfully compiled the prompt, but the resulting video output triggered the safety/policy filters and was blocked.\n\n"
                     "### Why did this happen?\n"
                     "Even if your prompt was innocent (e.g. 'a cat playing with yarn'), the model may have hallucinated a human face or a restricted public figure in the background. When the video was finalized, Google's output filters caught it and rejected the entire clip.\n\n"
                     "### How to fix it:\n"
@@ -543,14 +747,14 @@ async def _generate_or_edit_video_impl(
                 )
             else:
                 return (
-                    "Error: The video generation model blocked your input prompt due to safety/policy filters.\n\n"
+                    f"{prefix}Error: The video generation model blocked your input prompt due to Google's Responsible AI safety/policy filters.\n\n"
                     "### Why did this happen?\n"
-                    "Creative video generation models have strict guardrails regarding deepfakes. This issue was triggered because your input likely contained terms referencing humans (e.g., 'anchor', 'person') alongside animation requests.\n\n"
+                    "Creative video generation models have strict guardrails regarding sensitive topics, medical claims, public figures, or deepfakes. This issue was triggered because your input likely contained terms referencing humans, clinical trials, or medical claims alongside video generation requests.\n\n"
                     "### How to fix it:\n"
-                    "Please update your request message to rely on abstract design styles or neutral placeholder metaphors."
+                    "Please update your storyboard board description to rely on abstract design styles, data visualizations, or neutral placeholder metaphors without human figures or medical claims."
                 )
         
-        # Generic 400 errors or timeout that are NOT safety related shouldn't be masked
+        # Generic errors that are NOT safety related shouldn't be masked
         raise e
 
     # Extract model output video part
@@ -606,11 +810,18 @@ async def _generate_or_edit_video_impl(
         raise ValueError("No video was generated or returned by the interactions model.")
 
     # Save video as an artifact
-    filename = "generated_video.mp4"
+    filename = f"generated_video_board_{board_index}.mp4" if board_index is not None else "generated_video.mp4"
     version = await tool_context.save_artifact(filename=filename, artifact=video_part)
 
     # Save interaction ID and serialized steps to the session state
     tool_context.session.state["previous_interaction_id"] = interaction.id
+
+    storyboard_ids = list(tool_context.session.state.get("storyboard_interaction_ids", []))
+    if board_index is not None and 1 <= board_index <= len(storyboard_ids):
+        storyboard_ids[board_index - 1] = interaction.id
+    else:
+        storyboard_ids.append(interaction.id)
+    tool_context.session.state["storyboard_interaction_ids"] = storyboard_ids
 
     serialized_steps = []
     if edit_previous_video and steps:
@@ -628,11 +839,13 @@ async def _generate_or_edit_video_impl(
     artifact_version = await tool_context.get_artifact_version(filename, version=version)
     canonical_uri = artifact_version.canonical_uri
 
+    board_header = f"### 🎬 Video / Board #{board_index}\n**Sequence Order:** #{board_index} in storyboard\n\n" if board_index is not None else ""
+    board_info = f"\nBoard Index: {board_index}" if board_index is not None else ""
     if canonical_uri.startswith("gs://"):
         http_url = _generate_signed_url(canonical_uri)
-        return f"Video generated successfully!\n\nSaved to GCS: ![{filename}]({canonical_uri})\n\nDownload Video: {http_url}\nAspect Ratio: {aspect_ratio}"
+        return f"{board_header}Video generated successfully!\n\nSaved to GCS: ![{filename}]({canonical_uri})\n\nDownload Video: {http_url}\nAspect Ratio: {aspect_ratio}{board_info}"
     else:
-        return f"Video generated successfully!\n\nSaved to artifacts: ![{filename}](artifact://{filename}?version={version})\nDownload Video: artifact://{filename}?version={version}\nAspect Ratio: {aspect_ratio}"
+        return f"{board_header}Video generated successfully!\n\nSaved to artifacts: ![{filename}](artifact://{filename}?version={version})\nDownload Video: artifact://{filename}?version={version}\nAspect Ratio: {aspect_ratio}{board_info}"
         
 async def video_generation_tool(
     prompt: str,
@@ -641,6 +854,7 @@ async def video_generation_tool(
     task: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
     file_uris: Optional[list[str]] = None,
+    board_index: Optional[int] = None,
     tool_context: ToolContext = None,
 ) -> str:
     """Generates a new video or edits an existing/uploaded video using the stateful interactions API with Gemini Omni Flash.
@@ -652,6 +866,7 @@ async def video_generation_tool(
         task: (Test compat) Task type.
         aspect_ratio: (Test compat) Aspect ratio.
         file_uris: (Test compat) File URIs for inputs.
+        board_index: Optional 1-indexed storyboard board number.
     """
     
     # Map test arguments to new arguments if needed
@@ -663,6 +878,7 @@ async def video_generation_tool(
     diag_parts = [
         f"edit_previous_video={edit_previous_video}",
         f"video_to_edit={video_to_edit}",
+        f"board_index={board_index}",
         f"tool_context.session.state exists: {tool_context.session.state is not None}",
     ]
     if tool_context.session.state is not None:
@@ -674,7 +890,7 @@ async def video_generation_tool(
     diag_str = " | ".join(diag_parts)
 
     try:
-        res = await _generate_or_edit_video_impl(prompt, edit_previous_video, video_to_edit, tool_context, task, file_uris, aspect_ratio=aspect_ratio or "16:9")
+        res = await _generate_or_edit_video_impl(prompt, edit_previous_video, video_to_edit, tool_context, task, file_uris, aspect_ratio=aspect_ratio or "16:9", board_index=board_index)
         return f"{res}\n\n---\n**Debug Diagnostics:** `{diag_str}`"
     except Exception as e:
         logger.error("[generate_or_edit_video] Failed: %s", e)

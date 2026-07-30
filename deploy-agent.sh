@@ -61,11 +61,13 @@ fi
 AGENT_RUNTIME_SERVICE_ACCOUNT="${AGENT_RUNTIME_SERVICE_ACCOUNT:-service-${GOOGLE_CLOUD_PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com}"
 COMPUTE_SERVICE_ACCOUNT="${COMPUTE_SERVICE_ACCOUNT:-${GOOGLE_CLOUD_PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
 
-echo "🛡️ Granting roles/aiplatform.user and roles/storage.objectAdmin to service accounts..."
+echo "🛡️ Granting roles/aiplatform.user, roles/storage.objectAdmin, and roles/iam.serviceAccountTokenCreator to service accounts..."
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/aiplatform.user" --condition=None > /dev/null 2>&1 || true
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/aiplatform.user" --condition=None > /dev/null 2>&1 || true
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None > /dev/null 2>&1 || true
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None > /dev/null 2>&1 || true
 
 # Pass the project explicitly to the agents-cli deployments.
 agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"
