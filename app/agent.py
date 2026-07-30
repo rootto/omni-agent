@@ -14,11 +14,14 @@
 
 """Main orchestration agent for Omni-Agent (Gemini Enterprise Video Creation & Editing Agent)."""
 
+import os
+
 from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
 
+from app.plugins import FileDataResolverPlugin
 from app.tools.video_generation_tool import generate_or_edit_video
 
 
@@ -38,18 +41,28 @@ When you receive a request, determine the user's intent:
 1. **Generate a New Video:**
    - If the user wants to generate a new video from scratch, call `generate_or_edit_video` with:
      * `prompt`: A description of the video to create.
+     * `task`: "text_to_video" (or "image_to_video" if images are provided).
+     * `aspect_ratio`: "16:9" (default landscape) or "9:16" (portrait).
      * `edit_previous_video`: False.
 
 2. **Edit a New/Uploaded Video:**
    - If the user provides a specific video file path or GCS URI to edit, call `generate_or_edit_video` with:
      * `prompt`: The description of the edits to apply.
+     * `task`: "edit".
      * `video_to_edit`: The file path/URI of the input video.
      * `edit_previous_video`: False.
 
 3. **Conversational Edit on Previously Generated Video:**
    - If the user asks to modify or edit the video that was *just* generated in this session (e.g. "change the background", "make the dog wear a red hat"), call `generate_or_edit_video` with:
      * `prompt`: The description of the edits.
+     * `task`: "edit".
      * `edit_previous_video`: True.
+
+4. **Extend an Existing or Uploaded Video:**
+   - If the user asks to extend a video (e.g. "make this 5 seconds longer"), call `generate_or_edit_video` with:
+     * `prompt`: A description of what should happen in the extended clip.
+     * `task`: "extend_video".
+     * `edit_previous_video`: True (if extending the last generated video) or False with `video_to_edit` (if extending an uploaded video).
 
 **Formatting Constraints (CRITICAL):**
 * You must present the generated or edited video inline in your final response using the exact markdown inline media syntax (including the exclamation mark and URI) returned by the `generate_or_edit_video` tool in its success message.
@@ -60,7 +73,7 @@ When you receive a request, determine the user's intent:
 root_agent = Agent(
     name="omni_agent",
     model=Gemini(
-        model="gemini-3.5-flash",
+        model=os.environ.get("AGENT_MODEL_ID", "gemini-3.5-flash"),
         retry_options=types.HttpRetryOptions(
             initial_delay=1.0,
             attempts=5,
@@ -75,4 +88,5 @@ root_agent = Agent(
 app = App(
     root_agent=root_agent,
     name="app",
+    plugins=[FileDataResolverPlugin()],
 )
