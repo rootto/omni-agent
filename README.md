@@ -10,8 +10,9 @@ Omni-Agent is an AI-powered conversational video generation and editing assistan
 
 This project uses **uv** for fast Python package and tool management. Installing `uv` automatically installs the `uvx` tool runner:
 
+**macOS / Linux (`bash`):**
 ```bash
-# Install uv and uvx (macOS / Linux)
+# Install uv and uvx
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Or install via Homebrew
@@ -21,12 +22,30 @@ brew install uv
 uvx google-agents-cli setup
 ```
 
+**Windows (`PowerShell`):**
+```powershell
+# Install uv and uvx
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Or install via winget
+winget install --id=astral-sh.uv -e
+
+# Install Google Agents CLI via uvx
+uvx google-agents-cli setup
+```
+
 ### 2. Configure Environment Variables
 
 Copy `.env.example` to `.env` and configure your target environment variables:
 
+**macOS / Linux (`bash`):**
 ```bash
 cp .env.example .env
+```
+
+**Windows (`PowerShell`):**
+```powershell
+Copy-Item .env.example .env
 ```
 
 Required variables in `.env`:
@@ -40,7 +59,7 @@ Required variables in `.env`:
 
 ### 3. Required IAM Roles for Deployment
 
-The user or service principal running `./deploy-agent.sh` must have the following Google Cloud IAM roles on the target project (`GOOGLE_CLOUD_PROJECT`):
+The user or service principal running `./deploy-agent.sh` (or `.\deploy-agent.ps1` on Windows) must have the following Google Cloud IAM roles on the target project (`GOOGLE_CLOUD_PROJECT`):
 
 - **Project IAM Admin (`roles/resourcemanager.projectIamAdmin`)**: To bind runtime IAM roles (`aiplatform.user`, `storage.objectAdmin`, `iam.serviceAccountTokenCreator`) to the Reasoning Engine service accounts.
 - **Vertex AI Admin (`roles/aiplatform.admin`)** *or* **Vertex AI User (`roles/aiplatform.user`)**: To create and update Vertex AI Reasoning Engine instances (`aiplatform.googleapis.com/ReasoningEngine`).
@@ -53,8 +72,14 @@ The user or service principal running `./deploy-agent.sh` must have the followin
 
 Deploy the agent to Vertex AI Reasoning Engine and publish it to Gemini Enterprise using the authoritative deployment script:
 
+**macOS / Linux (`bash`):**
 ```bash
 bash ./deploy-agent.sh
+```
+
+**Windows (`PowerShell`):**
+```powershell
+.\deploy-agent.ps1
 ```
 
 ---
