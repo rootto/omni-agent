@@ -12,6 +12,8 @@ fi
 
 PROJECT="${GOOGLE_CLOUD_PROJECT}"
 INSTANCE="${GEMINI_ENTERPRISE_INSTANCE}"
+PROJECT_NUMBER="${PROJECT_NUMBER:-$GOOGLE_CLOUD_PROJECT_NUMBER}"
+GEMINI_APP_LOCATION="${GEMINI_APP_LOCATION:-global}"
 ARTIFACTS_BUCKET="${GCS_BUCKET_NAME:-geapp_agents_storage}" # Default, can be overridden via args
 
 # Check if arguments provided
@@ -73,6 +75,6 @@ gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMP
 agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"
 
 # Publish to the targeted Gemini Enterprise App Instance to make the agent visible in the environment.
-APP_ID="${GEMINI_ENTERPRISE_APP_ID:-projects/${GOOGLE_CLOUD_PROJECT_NUMBER}/locations/global/collections/default_collection/engines/$INSTANCE}"
+APP_ID="projects/${PROJECT_NUMBER}/locations/${GEMINI_APP_LOCATION}/collections/default_collection/engines/${INSTANCE}"
 echo "🔗 Publishing Agent to Gemini Enterprise..."
 agents-cli publish gemini-enterprise --project "$PROJECT" --gemini-enterprise-app-id "$APP_ID"

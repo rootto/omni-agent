@@ -21,6 +21,8 @@ if (Test-Path ".env") {
 
 $PROJECT = $env:GOOGLE_CLOUD_PROJECT
 $INSTANCE = $env:GEMINI_ENTERPRISE_INSTANCE
+$PROJECT_NUMBER = if ($env:PROJECT_NUMBER) { $env:PROJECT_NUMBER } else { $env:GOOGLE_CLOUD_PROJECT_NUMBER }
+$GEMINI_APP_LOCATION = if ($env:GEMINI_APP_LOCATION) { $env:GEMINI_APP_LOCATION } else { "global" }
 $ARTIFACTS_BUCKET = if ($env:GCS_BUCKET_NAME) { $env:GCS_BUCKET_NAME } else { "geapp_agents_storage" } # Default, can be overridden via args
 
 # Check if arguments provided
@@ -124,11 +126,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Publish to the targeted Gemini Enterprise App Instance to make the agent visible in the environment.
-$APP_ID = if ($env:GEMINI_ENTERPRISE_APP_ID) {
-    $env:GEMINI_ENTERPRISE_APP_ID
-} else {
-    "projects/$($GOOGLE_CLOUD_PROJECT_NUMBER)/locations/global/collections/default_collection/engines/$INSTANCE"
-}
+$APP_ID = "projects/$PROJECT_NUMBER/locations/$GEMINI_APP_LOCATION/collections/default_collection/engines/$INSTANCE"
 Write-Host "🔗 Publishing Agent to Gemini Enterprise..."
 agents-cli publish gemini-enterprise --project "$PROJECT" --gemini-enterprise-app-id "$APP_ID"
 if ($LASTEXITCODE -ne 0) {

@@ -50,8 +50,9 @@ Copy-Item .env.example .env
 
 Required variables in `.env`:
 - `GOOGLE_CLOUD_PROJECT`: Your Google Cloud Project ID (e.g. `omini-test-agent`).
-- `GOOGLE_CLOUD_PROJECT_NUMBER`: Your numeric Google Cloud Project Number (e.g. `687484203981`).
+- `GOOGLE_CLOUD_PROJECT_NUMBER` / `PROJECT_NUMBER`: Your numeric Google Cloud Project Number (e.g. `687484203981`).
 - `GEMINI_ENTERPRISE_INSTANCE`: Your target Gemini Enterprise engine instance name.
+- `GEMINI_APP_LOCATION`: Your target Gemini Enterprise engine location (`global`, `eu`, or `us`).
 - `GCS_BUCKET_NAME` & `LOGS_BUCKET_NAME`: Google Cloud Storage bucket name for video artifacts and logs.
 - `GOOGLE_GENAI_USE_ENTERPRISE`: Set to `1` to use Vertex AI / Enterprise endpoints.
 - `AGENT_MODEL_ID`: Orchestration model (default: `gemini-3.5-flash`).
