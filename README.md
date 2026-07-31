@@ -75,10 +75,11 @@ Before running the deployment script in a fresh environment, you must log in wit
    ```
 
 > [!WARNING]
-> **Why dependency installation is mandatory:** When deploying from a fresh environment without first running `uv sync` (or `agents-cli install`), the required project packages and virtual environment (`.venv`) are not initialized. This causes Vertex AI Reasoning Engine remote packaging to fail with:
-> ```
-> Error: Deployment failed: {'code': 3, 'message': 'Build failed. The issue might be caused by incorrect code, requirements.txt file or other dependencies.\n Please refer to our troubleshooting pages (e.g., https://docs.cloud.google.com/gemini-enterprise-agent-platform/troubleshooting/agent-deployment) to debug and fix the error.'}
-> ```
+> **Troubleshooting Deployment Error Code 3 (`Build failed...`):**
+> If you get `Error: Deployment failed: {'code': 3, 'message': 'Build failed. The issue might be caused by incorrect code, requirements.txt file or other dependencies...'}` when deploying in a fresh environment, verify the following:
+> 1. **Required Cloud APIs**: Vertex AI Reasoning Engine builds your container in Google Cloud Build (`cloudbuild.googleapis.com`). Our deployment scripts (`deploy-agent.sh` / `deploy-agent.ps1`) automatically enable `cloudbuild.googleapis.com`, `aiplatform.googleapis.com`, and `discoveryengine.googleapis.com`, but ensure your account has permission to enable APIs (`roles/serviceusage.serviceUsageAdmin`).
+> 2. **Cloud Build IAM Permissions**: The Cloud Build service account (`<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com`) must have read/write access to Cloud Storage (`roles/storage.objectAdmin`) and Cloud Logging (`roles/logging.logWriter`). Our deployment scripts automatically grant these bindings.
+> 3. **Synchronized Lockfile**: In a fresh environment, run `uv sync` before running deployment so `uv.lock` is synchronized with `pyproject.toml`.
 
 ### 4. Required IAM Roles for Deployment
 

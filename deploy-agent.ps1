@@ -78,7 +78,7 @@ $env:LOGS_BUCKET_NAME = $ARTIFACTS_BUCKET
 $env:GCS_BUCKET_NAME = $ARTIFACTS_BUCKET
 
 Write-Host "🛡️ Verifying required Cloud APIs..."
-gcloud services enable cloudresourcemanager.googleapis.com --project "$PROJECT"
+gcloud services enable cloudresourcemanager.googleapis.com aiplatform.googleapis.com cloudbuild.googleapis.com storage.googleapis.com discoveryengine.googleapis.com iam.googleapis.com --project "$PROJECT"
 if ($LASTEXITCODE -ne 0) {
     throw "gcloud services enable failed with exit code $LASTEXITCODE"
 }
@@ -118,6 +118,8 @@ try { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount
 try { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/storage.objectAdmin" --condition=None 2>&1 | Out-Null } catch {}
 try { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None 2>&1 | Out-Null } catch {}
 try { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None 2>&1 | Out-Null } catch {}
+try { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$($GOOGLE_CLOUD_PROJECT_NUMBER)@cloudbuild.gserviceaccount.com" --role="roles/storage.objectAdmin" --condition=None 2>&1 | Out-Null } catch {}
+try { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$($GOOGLE_CLOUD_PROJECT_NUMBER)@cloudbuild.gserviceaccount.com" --role="roles/logging.logWriter" --condition=None 2>&1 | Out-Null } catch {}
 
 # Pass the project explicitly to the agents-cli deployments.
 agents-cli deploy --project "$PROJECT" --no-confirm-project @remainingArgs

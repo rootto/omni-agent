@@ -47,7 +47,14 @@ sed -i "s/^LOGS_BUCKET_NAME=.*/LOGS_BUCKET_NAME=$ARTIFACTS_BUCKET/" .env
 sed -i "s/^GCS_BUCKET_NAME=.*/GCS_BUCKET_NAME=$ARTIFACTS_BUCKET/" .env
 
 echo "🛡️ Verifying required Cloud APIs..."
-gcloud services enable cloudresourcemanager.googleapis.com --project "$PROJECT"
+gcloud services enable \
+    cloudresourcemanager.googleapis.com \
+    aiplatform.googleapis.com \
+    cloudbuild.googleapis.com \
+    storage.googleapis.com \
+    discoveryengine.googleapis.com \
+    iam.googleapis.com \
+    --project "$PROJECT"
 
 if [ -z "$GOOGLE_CLOUD_PROJECT_NUMBER" ]; then
     read -p "Enter your Google Cloud Project Number (numeric ID): " GOOGLE_CLOUD_PROJECT_NUMBER
@@ -70,6 +77,8 @@ gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGEN
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None > /dev/null 2>&1 || true
 gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None > /dev/null 2>&1 || true
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${GOOGLE_CLOUD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
+gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${GOOGLE_CLOUD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" --role="roles/logging.logWriter" --condition=None > /dev/null 2>&1 || true
 
 # Pass the project explicitly to the agents-cli deployments.
 agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"
