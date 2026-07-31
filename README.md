@@ -58,7 +58,29 @@ Required variables in `.env`:
 - `AGENT_MODEL_ID`: Orchestration model (default: `gemini-3.5-flash`).
 - `OMNI_MODEL_ID`: Video generation model (default: `gemini-omni-flash-preview`).
 
-### 3. Required IAM Roles for Deployment
+### 3. Authenticate & Install Project Dependencies
+
+Before running the deployment script in a fresh environment, you must log in with Google Cloud Application Default Credentials (ADC) and install project dependencies locally.
+
+1. **Authenticate with Google Cloud ADC:**
+   ```bash
+   gcloud auth application-default login
+   ```
+
+2. **Install Project Dependencies:**
+   ```bash
+   uv sync
+   # or
+   agents-cli install
+   ```
+
+> [!WARNING]
+> **Why dependency installation is mandatory:** When deploying from a fresh environment without first running `uv sync` (or `agents-cli install`), the required project packages and virtual environment (`.venv`) are not initialized. This causes Vertex AI Reasoning Engine remote packaging to fail with:
+> ```
+> Error: Deployment failed: {'code': 3, 'message': 'Build failed. The issue might be caused by incorrect code, requirements.txt file or other dependencies.\n Please refer to our troubleshooting pages (e.g., https://docs.cloud.google.com/gemini-enterprise-agent-platform/troubleshooting/agent-deployment) to debug and fix the error.'}
+> ```
+
+### 4. Required IAM Roles for Deployment
 
 The user or service principal running `./deploy-agent.sh` (or `.\deploy-agent.ps1` on Windows) must have the following Google Cloud IAM roles on the target project (`GOOGLE_CLOUD_PROJECT`):
 
@@ -69,7 +91,7 @@ The user or service principal running `./deploy-agent.sh` (or `.\deploy-agent.ps
 - **Service Usage Admin (`roles/serviceusage.serviceUsageAdmin`)**: To enable required Google Cloud APIs (`cloudresourcemanager.googleapis.com`, `aiplatform.googleapis.com`).
 - **Discovery Engine Editor (`roles/discoveryengine.editor`)** *or* **Discovery Engine Admin (`roles/discoveryengine.admin`)**: To register and publish the agent to Gemini Enterprise (`discoveryengine.googleapis.com`).
 
-### 4. Deploy & Publish
+### 5. Deploy & Publish
 
 Deploy the agent to Vertex AI Reasoning Engine and publish it to Gemini Enterprise using the authoritative deployment script:
 
