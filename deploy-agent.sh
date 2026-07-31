@@ -68,17 +68,23 @@ if [ -z "$GOOGLE_CLOUD_PROJECT_NUMBER" ]; then
 fi
 
 AGENT_RUNTIME_SERVICE_ACCOUNT="${AGENT_RUNTIME_SERVICE_ACCOUNT:-service-${GOOGLE_CLOUD_PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com}"
-COMPUTE_SERVICE_ACCOUNT="${COMPUTE_SERVICE_ACCOUNT:-${GOOGLE_CLOUD_PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
+CLOUDBUILD_SERVICE_ACCOUNT="${GOOGLE_CLOUD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
 
-echo "🛡️ Granting roles/aiplatform.user, roles/storage.objectAdmin, and roles/iam.serviceAccountTokenCreator to service accounts..."
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/aiplatform.user" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/aiplatform.user" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$COMPUTE_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${GOOGLE_CLOUD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" --role="roles/storage.objectAdmin" --condition=None > /dev/null 2>&1 || true
-gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:${GOOGLE_CLOUD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" --role="roles/logging.logWriter" --condition=None > /dev/null 2>&1 || true
+echo "🛡️ Granting deployment IAM roles to Reasoning Engine and Cloud Build service accounts..."
+grant_role_or_warn() {
+    local member="$1"
+    local role="$2"
+    if ! gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$member" --role="$role" --condition=None > /dev/null 2>&1; then
+        echo "⚠️  Could not grant $role to $member (insufficient Project IAM Admin permission)."
+        echo "    If deployment fails, ask an IAM Admin to run: bash ./set-iam-permissions.sh"
+    fi
+}
+
+grant_role_or_warn "$AGENT_RUNTIME_SERVICE_ACCOUNT" "roles/aiplatform.user"
+grant_role_or_warn "$AGENT_RUNTIME_SERVICE_ACCOUNT" "roles/storage.objectAdmin"
+grant_role_or_warn "$AGENT_RUNTIME_SERVICE_ACCOUNT" "roles/iam.serviceAccountTokenCreator"
+grant_role_or_warn "$CLOUDBUILD_SERVICE_ACCOUNT" "roles/storage.objectAdmin"
+grant_role_or_warn "$CLOUDBUILD_SERVICE_ACCOUNT" "roles/logging.logWriter"
 
 # Pass the project explicitly to the agents-cli deployments.
 agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"

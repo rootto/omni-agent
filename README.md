@@ -81,16 +81,33 @@ Before running the deployment script in a fresh environment, you must log in wit
 > 2. **Cloud Build IAM Permissions**: The Cloud Build service account (`<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com`) must have read/write access to Cloud Storage (`roles/storage.objectAdmin`) and Cloud Logging (`roles/logging.logWriter`). Our deployment scripts automatically grant these bindings.
 > 3. **Synchronized Lockfile**: In a fresh environment, run `uv sync` before running deployment so `uv.lock` is synchronized with `pyproject.toml`.
 
-### 4. Required IAM Roles for Deployment
+### 4. Required IAM Roles & Out-of-Band IAM Provisioning
 
-The user or service principal running `./deploy-agent.sh` (or `.\deploy-agent.ps1` on Windows) must have the following Google Cloud IAM roles on the target project (`GOOGLE_CLOUD_PROJECT`):
-
-- **Project IAM Admin (`roles/resourcemanager.projectIamAdmin`)**: To bind runtime IAM roles (`aiplatform.user`, `storage.objectAdmin`, `iam.serviceAccountTokenCreator`) to the Reasoning Engine service accounts.
-- **Vertex AI Admin (`roles/aiplatform.admin`)** *or* **Vertex AI User (`roles/aiplatform.user`)**: To create and update Vertex AI Reasoning Engine instances (`aiplatform.googleapis.com/ReasoningEngine`).
-- **Service Account User (`roles/iam.serviceAccountUser`)**: To attach the runtime service account (`service-<PROJECT_NUMBER>@gcp-sa-aiplatform-re...`) during deployment.
+#### Developer Deployment Roles
+The developer or CI/CD service principal running `./deploy-agent.sh` (or `.\deploy-agent.ps1` on Windows) must have:
+- **Vertex AI User (`roles/aiplatform.user`)**: To deploy and update Vertex AI Reasoning Engine instances (`aiplatform.googleapis.com/ReasoningEngine`).
+- **Service Account User (`roles/iam.serviceAccountUser`)**: To attach the Reasoning Engine service account (`service-<PROJECT_NUMBER>@gcp-sa-aiplatform-re...`) during deployment.
 - **Storage Admin (`roles/storage.admin`)**: To create and manage the Google Cloud Storage bucket for video artifacts and deployment staging packages.
-- **Service Usage Admin (`roles/serviceusage.serviceUsageAdmin`)**: To enable required Google Cloud APIs (`cloudresourcemanager.googleapis.com`, `aiplatform.googleapis.com`).
-- **Discovery Engine Editor (`roles/discoveryengine.editor`)** *or* **Discovery Engine Admin (`roles/discoveryengine.admin`)**: To register and publish the agent to Gemini Enterprise (`discoveryengine.googleapis.com`).
+- **Service Usage Admin (`roles/serviceusage.serviceUsageAdmin`)**: To enable required Google Cloud APIs (`cloudbuild.googleapis.com`, `aiplatform.googleapis.com`, etc.).
+- **Discovery Engine Editor (`roles/discoveryengine.editor`)**: To register and publish the agent to Gemini Enterprise (`discoveryengine.googleapis.com`).
+
+#### What If You Don't Have Project IAM Admin Access?
+Our deployment scripts attempt to grant required runtime IAM roles automatically. If you do not have **Project IAM Admin (`roles/resourcemanager.projectIamAdmin`)**, the script will catch the permission error, display a warning, and continue deploying without aborting.
+
+Before deploying in a non-admin environment, ask your organization's Google Cloud Project IAM Admin to run our authoritative IAM setup script:
+- **macOS / Linux**: `bash ./set-iam-permissions.sh`
+- **Windows**: `.\set-iam-permissions.ps1`
+
+#### Why Are Specific Runtime IAM Roles Required?
+The IAM setup script binds the following required roles to the Reasoning Engine (`service-<PROJECT_NUMBER>@gcp-sa-aiplatform-re.iam.gserviceaccount.com`) and Cloud Build (`<PROJECT_NUMBER>@cloudbuild.gserviceaccount.com`) service accounts:
+1. **`roles/storage.objectAdmin` (Why not `objectViewer` or `objectCreator`?)**:
+   - **Video Editing & Overwriting**: Omni-Agent generates video `.mp4` artifacts from `gemini-omni-flash-preview` and edits multi-scene storyboards. It must read, overwrite, create, and delete blobs in GCS (`$GCS_BUCKET_NAME`).
+   - **Cloud Build Staging Cleanup**: During container builds, Cloud Build reads source tarballs from staging buckets and cleans up temporary blobs after build completion.
+   - Less permission (`objectViewer` or `objectCreator`) prevents video version overwrites and breaks container staging cleanup.
+2. **`roles/iam.serviceAccountTokenCreator` (Why is this needed?)**:
+   - **V4 Signed URL Signing**: Reasoning Engine managed service accounts do not hold downloadable private key `.json` files. To allow users and web frontends to stream generated videos directly from GCS, Omni-Agent calls the IAM Credentials API (`signBlob`) to generate 7-day **V4 Signed URLs**. Calling `signBlob` on a service account requires `roles/iam.serviceAccountTokenCreator`.
+3. **`roles/aiplatform.user`**: Allows Reasoning Engine to invoke Gemini Enterprise models (`gemini-3.5-flash`, `gemini-omni-flash-preview`).
+4. **`roles/logging.logWriter`**: Allows Cloud Build to stream container build logs to Cloud Logging.
 
 ### 5. Deploy & Publish
 
@@ -110,6 +127,14 @@ bash ./deploy-agent.sh
 
 ## Development & Local Testing
 
+### Local Development IAM Permissions
+When running local tests (`agents-cli run`, `agents-cli playground`, or integration tests), the agent executes under your default Compute Engine developer service account (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`).
+
+To grant the necessary runtime permissions (`roles/aiplatform.user`, `roles/storage.objectAdmin`, `roles/iam.serviceAccountTokenCreator`) for local development without affecting production deployment service accounts, run:
+- **macOS / Linux**: `bash ./set-local-dev-permissions.sh`
+- **Windows**: `.\set-local-dev-permissions.ps1`
+
+### Running Local Tests
 Install dependencies and run local unit/integration tests using `uv`:
 
 ```bash
