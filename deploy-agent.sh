@@ -86,6 +86,12 @@ grant_role_or_warn "$AGENT_RUNTIME_SERVICE_ACCOUNT" "roles/iam.serviceAccountTok
 grant_role_or_warn "$CLOUDBUILD_SERVICE_ACCOUNT" "roles/storage.objectAdmin"
 grant_role_or_warn "$CLOUDBUILD_SERVICE_ACCOUNT" "roles/logging.logWriter"
 
+# Allow Reasoning Engine service account to sign blobs using the default Compute Engine service account
+if ! gcloud iam service-accounts add-iam-policy-binding "${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --project="$PROJECT" --condition=None > /dev/null 2>&1; then
+    echo "⚠️  Could not grant roles/iam.serviceAccountTokenCreator on ${PROJECT_NUMBER}-compute@developer.gserviceaccount.com to $AGENT_RUNTIME_SERVICE_ACCOUNT."
+    echo "    If deployment fails to sign V4 Signed URLs, ask an IAM Admin to run: bash ./set-iam-permissions.sh"
+fi
+
 # Pass the project explicitly to the agents-cli deployments.
 agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"
 

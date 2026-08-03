@@ -87,7 +87,13 @@ def _generate_signed_url(gcs_uri: str) -> str:
                 with urllib.request.urlopen(req, timeout=2) as resp:
                     sa_email = resp.read().decode("utf-8").strip()
             except Exception:
-                sa_email = "service-687484203981@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+                sa_email = None
+
+        # Google-managed Service Agents (e.g. service-...@gcp-sa-aiplatform-re...) cannot call signBlob on themselves.
+        # Delegate signing to the user-managed default Compute Engine service account.
+        if not sa_email or sa_email.startswith("service-") or (sa_email.endswith(".gserviceaccount.com") and "-compute@" not in sa_email and "@gcp-sa-" in sa_email):
+            project_number = os.environ.get("PROJECT_NUMBER", "687484203981")
+            sa_email = os.environ.get("SIGNING_SERVICE_ACCOUNT", f"{project_number}-compute@developer.gserviceaccount.com")
 
         client = storage.Client(credentials=credentials)
         bucket = client.bucket(bucket_name)
@@ -100,9 +106,9 @@ def _generate_signed_url(gcs_uri: str) -> str:
             access_token=credentials.token,
         )
     except Exception as e:
-        logger.warning("Could not generate V4 signed URL for %s via IAM signBlob (%s). Using URL-encoded storage.cloud.google.com URL.", gcs_uri, e)
+        logger.warning("Could not generate V4 signed URL for %s via IAM signBlob (%s). Using URL-encoded storage.googleapis.com URL.", gcs_uri, e)
         encoded_path = urllib.parse.quote(object_path, safe='/')
-        return f"https://storage.cloud.google.com/{bucket_name}/{encoded_path}"
+        return f"https://storage.googleapis.com/{bucket_name}/{encoded_path}"
 
 def has_audio_stream(local_path: str) -> bool:
     """Checks if a video file has an audio stream using ffprobe."""

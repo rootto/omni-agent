@@ -127,6 +127,11 @@ Grant-RoleOrWarn -Member $AGENT_RUNTIME_SERVICE_ACCOUNT -Role "roles/iam.service
 Grant-RoleOrWarn -Member $CLOUDBUILD_SERVICE_ACCOUNT -Role "roles/storage.objectAdmin"
 Grant-RoleOrWarn -Member $CLOUDBUILD_SERVICE_ACCOUNT -Role "roles/logging.logWriter"
 
+# Allow Reasoning Engine service account to sign blobs using the default Compute Engine service account
+try {
+    gcloud iam service-accounts add-iam-policy-binding "$($PROJECT_NUMBER)-compute@developer.gserviceaccount.com" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --project="$PROJECT" --condition=None 2>&1 | Out-Null
+} catch {}
+
 # Pass the project explicitly to the agents-cli deployments.
 agents-cli deploy --project "$PROJECT" --no-confirm-project @remainingArgs
 if ($LASTEXITCODE -ne 0) {

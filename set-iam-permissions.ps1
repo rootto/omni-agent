@@ -66,4 +66,11 @@ Grant-Role -Member $CLOUDBUILD_SERVICE_ACCOUNT -Role "roles/storage.objectAdmin"
 Grant-Role -Member $CLOUDBUILD_SERVICE_ACCOUNT -Role "roles/logging.logWriter"
 
 Write-Host ""
+Write-Host "3) Cross-Service Account Signing Binding:"
+Write-Host "  -> Allowing $AGENT_RUNTIME_SERVICE_ACCOUNT to sign blobs using $($ProjectNumber)-compute@developer.gserviceaccount.com..."
+try {
+    gcloud iam service-accounts add-iam-policy-binding "$($ProjectNumber)-compute@developer.gserviceaccount.com" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --project="$Project" --condition=None 2>&1 | Out-Null
+} catch {}
+
+Write-Host ""
 Write-Host "✅ All required deployment IAM permissions granted successfully!"
