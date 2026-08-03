@@ -72,6 +72,8 @@ async def save_style_to_memory(
         return
 
     text = f"Style Name: {name}\nStyle Markdown:\n{markdown}"
+    if len(text) > 1950:
+        text = text[:1950] + "\n..."
     content = types.Content(
         role="user",
         parts=[types.Part.from_text(text=text)],
@@ -85,13 +87,18 @@ async def save_style_to_memory(
             custom_metadata=custom_metadata,
         )
         logger.info("[save_style_to_memory] Saved style '%s' via add_memory.", name)
-    except NotImplementedError:
+    except (NotImplementedError, AttributeError):
         logger.info("[save_style_to_memory] Memory service fallback: saving via add_events_to_memory.")
-        event = Event(author="user", content=content)
-        await tool_context.add_events_to_memory(
-            events=[event],
-            custom_metadata=custom_metadata,
-        )
+        try:
+            event = Event(author="user", content=content)
+            await tool_context.add_events_to_memory(
+                events=[event],
+                custom_metadata=custom_metadata,
+            )
+        except Exception as e:
+            logger.warning("[save_style_to_memory] Failed to add events to memory service: %s", e)
+    except Exception as e:
+        logger.warning("[save_style_to_memory] Failed to add memory entry to memory service: %s", e)
 
 
 async def get_saved_styles_from_memory(

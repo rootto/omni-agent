@@ -145,5 +145,21 @@ def test_format_style_prompt_and_clean_text_guardrail() -> None:
     formatted = format_style_prompt(base_prompt, style_md)
     assert base_prompt in formatted
     assert "Overall style: # Cinematic Style\nTeal and orange color grade." in formatted
-    assert guardrail in formatted
     assert formatted.endswith(guardrail)
+
+
+@pytest.mark.asyncio
+async def test_save_style_to_memory_truncation_and_error_handling() -> None:
+    """Verifies that large Markdown styles are capped to prevent 400 INVALID_ARGUMENT (Fact length > 2048 chars)."""
+    ctx = DummyMemoryToolContext()
+
+    long_markdown = "A" * 3000
+    await save_style_to_memory(ctx, "Long Style", long_markdown)
+
+    res = await ctx._memory_service.search_memory(app_name="test_app", user_id="test_user", query="Style Name:")
+    memories = list(getattr(res, "memories", []))
+    assert len(memories) > 0
+    saved_text = memories[0].content.parts[0].text
+    assert len(saved_text) <= 2048, "Memory Bank fact length must never exceed 2048 characters!"
+    assert "..." in saved_text
+
