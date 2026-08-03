@@ -242,4 +242,51 @@ async def test_video_generation_tool_stateful_edit_cuj3() -> None:
         assert "![generated_video.mp4](gs://geapp_agents_storage/artifacts/edit000.mp4)" in result
 
 
+@pytest.mark.asyncio
+async def test_video_generation_tool_with_active_style_cuj9() -> None:
+    """Verifies that active_style_markdown from session state is appended to the prompt with the clean-text guardrail."""
+    mock_client = MagicMock()
+    mock_interaction = MagicMock()
+    mock_interaction.id = "v1_styled_interaction_999"
+
+    mock_step = MagicMock()
+    mock_step.type = "model_output"
+
+    mock_part = MagicMock()
+    mock_part.type = "video"
+    mock_part.data = base64.b64encode(b"dummy_styled_mp4_bytes").decode("utf-8")
+    mock_part.mime_type = "video/mp4"
+
+    mock_step.content = [mock_part]
+    mock_interaction.steps = [mock_step]
+
+    mock_client.interactions.create.return_value = mock_interaction
+
+    tool_context = DummyToolContext()
+    tool_context.session.state["active_style_markdown"] = "# Google Brand Style\nPrimary blue and yellow."
+
+    mock_artifact_version = MagicMock()
+    mock_artifact_version.canonical_uri = "gs://geapp_agents_storage/artifacts/v1_styled_interaction_999.mp4"
+    tool_context.get_artifact_version.return_value = mock_artifact_version
+
+    with patch("google.genai.Client", return_value=mock_client), \
+         patch("app.tools.video_generation_tool._generate_signed_url", return_value="https://storage.cloud.google.com/test/styled.mp4"):
+
+        await video_generation_tool(
+            prompt="Create a cinematic ocean view",
+            task="text_to_video",
+            aspect_ratio="16:9",
+            tool_context=tool_context,
+        )
+
+        mock_client.interactions.create.assert_called_once()
+        call_kwargs = mock_client.interactions.create.call_args.kwargs
+        input_prompt = call_kwargs["input"]
+        assert "Create a cinematic ocean view" in input_prompt
+        assert "Overall style: # Google Brand Style\nPrimary blue and yellow." in input_prompt
+        assert "The ONLY text that should appear anywhere in this video is what's specified in the storyboard." in input_prompt
+        assert "Do not render any style guidelines, color names, hex codes, RGB values, or instructional metadata as text in the video itself." in input_prompt
+
+
+
 

@@ -6,9 +6,12 @@ The **Omni-Agent** is an intelligent, intent-driven video creation and editing a
 
 ### Architectural Separation of Concerns
 The system separates high-level conversational reasoning from raw multimodal video generation:
-* **Main Orchestration Agent:** Runs a fast reasoning model (`AGENT_MODEL_ID`, e.g., Gemini Flash 3.5 / Gemini 2.5 Flash). It handles user intent classification, conversational context, interactive prompt rewriting for short/vague video generation prompts, long-content storyboard decomposition, and session state orchestration (`file_data_mappings`, `storyboard_interaction_ids`).
+* **Main Orchestration Agent:** Runs a fast reasoning model (`AGENT_MODEL_ID`, e.g., Gemini Flash 3.5 / Gemini 2.5 Flash). It handles user intent classification, conversational context, interactive prompt rewriting for short/vague video generation prompts, long-content storyboard decomposition, style gate prompting, and session state orchestration (`file_data_mappings`, `storyboard_interaction_ids`, `active_style_markdown`).
 * **Storyboard Generation Engine:** Powered by **Gemini Flash 3.6 (`STORYBOARD_MODEL_ID` / `gemini-3.6-flash`)**. Invoked as a dedicated **Tool** (`storyboard_generation_tool`) when analyzing long or multi-scene narrative prompts on the first prompt to decompose them into consistent, editable storyboards.
 * **Video Generation & Editing Engine:** Powered exclusively by **Gemini Omni (`gemini-omni-flash-preview`)** via the Google GenAI Interactions API (`client.interactions.create(...)`). The main agent invokes Gemini Omni as a dedicated **Tool** (`video_generation_tool`).
+* **Session State & Long-Term Memory (Agent Platform AI Sessions & Memory Bank):**
+  * Uses **Agent Platform AI Sessions (`VertexAiSessionService`)** for persistent multi-turn state across conversation turns and sessions.
+  * Uses **Vertex AI Agent Engine Memory Bank (`VertexAiMemoryBankService`)** so the agent remembers any specific styling that has been added by the user across sessions and can suggest the latest 3 styles.
 
 ---
 
@@ -24,6 +27,9 @@ All runtime parameters, model identifiers, and infrastructure settings must be e
 | `STORYBOARD_MODEL_ID` | Yes | `gemini-3.6-flash` | Model identifier for the Storyboard analysis and decomposition tool (`storyboard_generation_tool`). |
 | `OMNI_MODEL_ID` | Yes | `gemini-omni-flash-preview` | Model identifier for the Gemini Omni video generation/editing tool. |
 | `GCS_BUCKET_NAME` | Yes | — | GCS bucket name (`gs://<bucket>`) for input/output video and image artifacts. |
+| `VERTEX_AI_AGENT_ENGINE_ID` | No | — | Vertex AI Agent Engine ID for Agent Platform AI Sessions and Memory Bank persistence (`agentengine://<id>`). |
+| `SESSION_SERVICE_URI` | No | `agentengine://<id>` or in-memory | URI for ADK Session Service persistence. |
+| `MEMORY_SERVICE_URI` | No | `agentengine://<id>` or in-memory | URI for ADK Memory Bank service persistence. |
 
 ---
 
@@ -112,6 +118,27 @@ When the user inputs **long content or a multi-scene narrative** on the first pr
 * **Multi-Video Execution & V4 Signed URLs:** Once the user approves the storyboard, the Main Agent invokes `generate_storyboard_videos_tool`, which automatically loops through each storyboard board in `current_storyboard` and creates an individual video clip for each board using Gemini Omni. Each video displays a sequence header (`### 🎬 Video X of Y | Board X`) and an authenticated **V4 Signed Download URL** valid for 7 days.
 * **FFMPEG Video Merging (`merge_storyboard_videos_tool`):** At the end of multi-video generation, the tool asks if the user wants to merge all the video clips together into a single continuous video in sequence order. If the user replies yes (`"Yes, merge them"` / `/merge`), the Main Agent invokes `merge_storyboard_videos_tool()`, which uses `ffmpeg` (`-c copy` with automatic re-encoding fallback) to stitch all board `.mp4` clips together in chronological order and returns the full merged video player and V4 signed download link.
 
+### 3.4 Style Gate, Memory Bank Suggestions & Clean-Text Injection (HITL)
+Before creating a new video or storyboard, the Main Agent checks if the user wants to apply a specific visual style:
+1. **Triggering Scope & Session Persistence:**
+   * The Style Gate applies to **all new asset creation projects** (both single-scene video generation and multi-scene storyboards).
+   * Once a style is chosen (or declined), it is persisted in the ADK Session Service state (`tool_context.session.state["active_style_name"]`, `tool_context.session.state["active_style_markdown"]`) and automatically reused across all follow-up turns in that session without reprompting.
+2. **Memory Bank Retrieval & Suggestions:**
+   * The agent queries **Vertex AI Agent Engine Memory Bank** (`tool_context.search_memory`) for previously saved styles.
+   * **If styles exist in Memory Bank:** The agent suggests up to the **latest 3 saved styles** (by name, e.g., *"Google Branding"*, *"Cinematic Dark"*, etc.) and asks if the user wants to use one of them, provide a new Markdown style, or proceed without a specific style (*"no"*).
+   * **If no styles exist in Memory Bank:** The agent asks if the user wants a specific style before creating the video. The user can say *"no"* or paste Markdown providing the style guidelines.
+3. **Naming & Remembering Styles in Memory Bank:**
+   * When a user pastes a Markdown style, the agent asks for a concise name (e.g., *"Google Branding"*), auto-generating a name via LLM summarization if left blank.
+   * The style is saved to Memory Bank (`tool_context.add_memory(memories=[...])`) as an explicit `MemoryEntry` containing both the Style Name and full Markdown content, tagged with custom metadata `{"type": "video_style", "style_name": name}`, enabling zero-friction suggestion and retrieval across future sessions.
+4. **Style Prompt & Clean-Text Guardrail Injection:**
+   * When an active style is present, its Markdown text and the mandatory clean-text guardrail are **appended at the very end of the prompt** sent to Gemini Omni for both single-scene video generation (`video_generation_tool`) and every board in multi-video storyboard generation (`generate_storyboard_videos_tool`).
+   * **MANDATORY Clean-Text Guardrail Block:** Alongside the style Markdown, the agent ALWAYS injects the following instruction block immediately after the style to prevent style metadata from rendering as text on screen:
+```
+Important:
+The ONLY text that should appear anywhere in this video is what's specified in the storyboard.
+Do not render any style guidelines, color names, hex codes, RGB values, or instructional metadata as text in the video itself. Keep all graphic elements and callout boxes completely clean of any technical prompts.
+```
+
 ---
 
 ## 4. Tool Interface & ADK Session Service State Architecture
@@ -176,6 +203,11 @@ When `client.interactions.create(...)` completes and stores interaction state in
    * **Authenticated HTTPS Download Link (`https://storage.cloud.google.com/...`):** Direct browser-accessible URL enabling users to download or share the generated `.mp4`.
 3. In multi-video storyboard executions, the Main Agent displays the ordered sequence of inline video players and HTTPS download links corresponding to each storyboard board index.
 
+### 4.5 Agent Platform AI Sessions & Memory Bank Architecture
+The system integrates Google ADK Session and Memory services for persistence:
+* **Persistent Multi-Turn Sessions (`VertexAiSessionService`):** Session state (`previous_interaction_id`, `current_storyboard`, `storyboard_interaction_ids`, `active_style_name`, `active_style_markdown`) is persisted in Agent Platform AI Sessions using the URI `agentengine://<VERTEX_AI_AGENT_ENGINE_ID>`.
+* **Long-Term Style Memory (`VertexAiMemoryBankService`):** Custom user styles are stored as structured memory entries via `tool_context.add_memory(...)`. When starting a task, the agent retrieves recent style memories (`tool_context.search_memory`) to offer the latest 3 styles.
+
 ---
 
 ## 5. Safety & Enterprise Policy Guardrails
@@ -207,3 +239,4 @@ The project lifecycle conforms strictly to standard Agent CLI (`google-agents-cl
 | **CUJ-6** | **Safety Block Handling** | User enters prompt triggering `FINISH_REASON_SAFETY`. | Tool catches API exception and reports exact safety feedback cleanly without retrying or crashing. |
 | **CUJ-7** | **Video Extension (Not Implemented)** | User uploads a video or asks to extend their recently generated video (e.g., *"Make this 5 seconds longer"*). | Main Agent invokes `video_generation_tool` (`extend_video`), handling either an uploaded file or the `previous_interaction_id`. *(Note: Pending API support).* |
 | **CUJ-8** | **Long-Content Storyboard to Multi-Video Generation** | User inputs a long or multi-scene narrative prompt on first prompt. | Main Agent dynamically routes to `storyboard_generation_tool` (`STORYBOARD_MODEL_ID`); breaks prompt down into up to 10 boards (`title`, `overall_video_creation_plan`, `style_summary`, and per-board cinematography, lighting, narrative, and audio cues, obeying directives against broadcast newsroom simulation and for optimal board counts); stores storyboard in ADK Session Service; presents comprehensive HITL review summary; user modifies a board or approves; Main Agent invokes `generate_storyboard_videos_tool`, which loops through each approved board to create an individual video clip (`video_generation_tool`) with V4 signed download URLs, stores `storyboard_interaction_ids` in ADK Session Service, and asks if user wants to merge them; if yes, `merge_storyboard_videos_tool()` merges clips in sequence order using `ffmpeg` and returns the full video. |
+| **CUJ-9** | **Memory Bank Style Gate & Clean-Text Video Injection** | User asks to create a video/storyboard. Agent checks Memory Bank and suggests latest 3 styles (or asks if user wants a style). User pastes Markdown style guidelines and names it *"Google Branding"*. | Named style is saved to Memory Bank via ADK `add_memory`; active style Markdown and mandatory `"Important: The ONLY text that should appear anywhere in this video..."` clean-text guardrail are appended to the prompt for Omni video generation. |

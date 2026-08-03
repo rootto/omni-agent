@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 from google.cloud import storage
 from google.genai import types
 
+from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from app import config
 from app.tools.video_generation_tool import video_generation_tool
 from app.tools.storyboard_generation_tool import generate_storyboard, update_storyboard
@@ -30,15 +31,47 @@ from app.tools.storyboard_generation_tool import generate_storyboard, update_sto
 class DummySession:
     def __init__(self):
         self.state = {}
+        self.id = "e2e_session_1"
+        self.user_id = "e2e_user"
+        self.app_name = "omni_app"
 
 
 class DummyToolContext:
     def __init__(self, bucket_name: str):
         self.session = DummySession()
+        self._memory_service = InMemoryMemoryService()
         self.state = {}
         self.bucket_name = bucket_name
         self.uploaded_uris = {}
         self.artifact_metadata = {}
+
+    @property
+    def user_id(self):
+        return self.session.user_id
+
+    async def add_memory(self, *, memories, custom_metadata=None):
+        return await self._memory_service.add_memory(
+            app_name=self.session.app_name,
+            user_id=self.user_id,
+            memories=memories,
+            custom_metadata=custom_metadata,
+        )
+
+    async def add_events_to_memory(self, *, events, session_id=None, custom_metadata=None):
+        return await self._memory_service.add_events_to_memory(
+            app_name=self.session.app_name,
+            user_id=self.user_id,
+            events=events,
+            session_id=session_id,
+            custom_metadata=custom_metadata,
+        )
+
+    async def search_memory(self, query: str):
+        return await self._memory_service.search_memory(
+            app_name=self.session.app_name,
+            user_id=self.user_id,
+            query=query,
+        )
 
     async def save_artifact(self, filename: str, artifact) -> int:
         version = 1
@@ -399,6 +432,45 @@ async def test_e2e_cuj8_storyboard_to_multi_video() -> None:
 
     storyboard_ids = tool_context.session.state.get("storyboard_interaction_ids")
     assert isinstance(storyboard_ids, list) and len(storyboard_ids) >= 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(900)
+async def test_e2e_cuj9_style_memory_and_clean_text_guardrail() -> None:
+    """Verifies CUJ-9 Style Gate, Memory Bank persistence, and clean-text guardrail video generation."""
+    bucket_name = config.get_gcs_bucket_name()
+    tool_context = DummyToolContext(bucket_name)
+
+    from app.tools.style_tool import save_style_tool, get_saved_styles_tool
+
+    # 1. Save a style to Memory Bank
+    save_res = await save_style_tool(
+        name="Google Branding E2E",
+        markdown="# Google Brand Style\nPrimary Google colors and crisp typography.",
+        tool_context=tool_context,
+    )
+    assert save_res["status"] == "saved"
+    assert tool_context.session.state.get("active_style_name") == "Google Branding E2E"
+    assert "Google Brand Style" in tool_context.session.state.get("active_style_markdown", "")
+
+    # 2. Verify retrieval from Memory Bank
+    get_res = await get_saved_styles_tool(tool_context=tool_context)
+    saved = get_res.get("saved_styles", [])
+    assert any(s["name"] == "Google Branding E2E" for s in saved)
+
+    # 3. Generate a video with active style present
+    output = await video_generation_tool(
+        prompt="Create a 16:9 cinematic shot of a modern clean tech workspace with natural light.",
+        task="text_to_video",
+        aspect_ratio="16:9",
+        tool_context=tool_context,
+    )
+
+    assert "Error:" not in output, f"Real API video generation with style failed: {output}"
+    assert "![generated_video.mp4](gs://" in output
+    assert "https://storage." in output
+    assert tool_context.session.state.get("previous_interaction_id") is not None
+
 
 
 
