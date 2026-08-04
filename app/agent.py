@@ -16,6 +16,10 @@
 
 import os
 
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
+os.environ.setdefault("GOOGLE_GENAI_USE_ENTERPRISE", "1")
+
 from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models import Gemini
@@ -29,9 +33,30 @@ from app.tools.storyboard_generation_tool import (
     generate_storyboard_videos_tool,
     merge_storyboard_videos_tool,
 )
+from app.tools.style_tool import (
+    get_saved_styles_tool,
+    save_style_tool,
+    set_active_style_tool,
+    clear_active_style_tool,
+)
 
 
-SYSTEM_INSTRUCTION = """You are the Video Agent. Your job is to generate and edit videos by calling the `generate_or_edit_video`, `storyboard_generation_tool`, `update_storyboard_tool`, `generate_storyboard_videos_tool`, and `merge_storyboard_videos_tool` tools.
+SYSTEM_INSTRUCTION = """You are the Video Agent. Your job is to generate and edit videos by calling the `generate_or_edit_video`, `storyboard_generation_tool`, `update_storyboard_tool`, `generate_storyboard_videos_tool`, `merge_storyboard_videos_tool`, `get_saved_styles_tool`, `save_style_tool`, `set_active_style_tool`, and `clear_active_style_tool` tools.
+
+### Visual Style Gate & Memory Bank (CUJ-9)
+Before creating a new video or storyboard project:
+1. Check if an active style is already set in the current session. If a style is already active, proceed without asking for a style.
+2. If no active style is set, check if the user specified a style in their request or asked for one.
+   - Call `get_saved_styles_tool()` to retrieve up to the 3 most recently saved styles from Vertex AI Memory Bank.
+   - **If saved styles exist in Memory Bank:** Suggest the latest saved styles by name (e.g., *"Google Branding"*, *"Cinematic Noir"*) and ask if the user wants to use one of them, provide a new Markdown style, or proceed without a specific style (*"no"*).
+   - **If no styles exist in Memory Bank:** Ask if the user wants a specific style before creating the video. They can say *"no"* or paste Markdown style guidelines.
+3. **When the user pastes a Markdown style:**
+   - Ask the user for a concise name (e.g., *"Google Branding"*), auto-generating a concise name via summarization if they leave it blank.
+   - Call `save_style_tool(name=..., markdown=...)` to save the named style to Vertex AI Memory Bank and activate it for this session.
+4. **When the user chooses a suggested style from Memory Bank:**
+   - Call `set_active_style_tool(name=..., markdown=...)` to set that style as active for this session.
+5. **When the user says "no style" or declines:**
+   - Call `clear_active_style_tool()` and proceed with video or storyboard creation without an active style.
 
 ### Asset Prompt Rewriting Gate (HITL 3-Way Choice)
 When the user asks to generate a new video but provides a **short, underspecified, or vague single-scene prompt** (e.g. "make a car video", "make a dog video"):
@@ -128,6 +153,10 @@ root_agent = Agent(
         update_storyboard_tool,
         generate_storyboard_videos_tool,
         merge_storyboard_videos_tool,
+        get_saved_styles_tool,
+        save_style_tool,
+        set_active_style_tool,
+        clear_active_style_tool,
     ],
 )
 

@@ -505,6 +505,11 @@ async def _generate_or_edit_video_impl(
             tool_context.session.state["previous_interaction_id"] = storyboard_ids[board_index - 1]
             logger.info("[generate_or_edit_video] Set previous_interaction_id to storyboard board %d ID: %s", board_index, storyboard_ids[board_index - 1])
 
+    if tool_context and tool_context.session and tool_context.session.state is not None:
+        active_style_markdown = tool_context.session.state.get("active_style_markdown")
+        from app.tools.style_tool import format_style_prompt
+        prompt = format_style_prompt(prompt, active_style_markdown)
+
     ensure_binaries()
 
     import os
