@@ -23,6 +23,7 @@ All runtime parameters, model identifiers, and infrastructure settings must be e
 | :--- | :--- | :--- | :--- |
 | `GOOGLE_CLOUD_PROJECT` | Yes | — | Google Cloud Project ID for execution and API billing. |
 | `GOOGLE_CLOUD_REGION` | Yes | `global` | Region for GenAI API endpoints and execution (`global`). |
+| `AGENT_REGION` | No | `us-central1` | Target Google Cloud region for Agent Runtime / Reasoning Engine deployment. |
 | `AGENT_MODEL_ID` | Yes | `gemini-2.5-flash` (or configured Flash 3.5 string) | Model identifier for the primary orchestration/reasoning agent. |
 | `STORYBOARD_MODEL_ID` | Yes | `gemini-3.6-flash` | Model identifier for the Storyboard analysis and decomposition tool (`storyboard_generation_tool`). |
 | `OMNI_MODEL_ID` | Yes | `gemini-omni-flash-preview` | Model identifier for the Gemini Omni video generation/editing tool. |

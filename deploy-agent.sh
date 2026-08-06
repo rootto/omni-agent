@@ -14,6 +14,7 @@ PROJECT="${GOOGLE_CLOUD_PROJECT}"
 INSTANCE="${GEMINI_ENTERPRISE_INSTANCE}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-$GOOGLE_CLOUD_PROJECT_NUMBER}"
 GEMINI_APP_LOCATION="${GEMINI_APP_LOCATION:-global}"
+AGENT_REGION="${AGENT_REGION:-us-central1}"
 ARTIFACTS_BUCKET="${GCS_BUCKET_NAME:-geapp_agents_storage}" # Default, can be overridden via args
 
 # Check if arguments provided
@@ -30,7 +31,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "🚀 Deploying Omni-Agent to project: $PROJECT"
+echo "🚀 Deploying Omni-Agent to project: $PROJECT (region: $AGENT_REGION)"
 echo "🏢 Targeting Gemini Enterprise Instance: $INSTANCE"
 echo "🪣  Using Artifacts Bucket: $ARTIFACTS_BUCKET"
 
@@ -92,8 +93,8 @@ if ! gcloud iam service-accounts add-iam-policy-binding "${PROJECT_NUMBER}-compu
     echo "    If deployment fails to sign V4 Signed URLs, ask an IAM Admin to run: bash ./set-iam-permissions.sh"
 fi
 
-# Pass the project explicitly to the agents-cli deployments.
-agents-cli deploy --project "$PROJECT" --no-confirm-project "$@"
+# Pass the project and region explicitly to the agents-cli deployments.
+agents-cli deploy --project "$PROJECT" --region "$AGENT_REGION" --no-confirm-project "$@"
 
 # Publish to the targeted Gemini Enterprise App Instance to make the agent visible in the environment.
 APP_ID="projects/${PROJECT_NUMBER}/locations/${GEMINI_APP_LOCATION}/collections/default_collection/engines/${INSTANCE}"

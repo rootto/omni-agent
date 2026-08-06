@@ -23,6 +23,7 @@ $PROJECT = $env:GOOGLE_CLOUD_PROJECT
 $INSTANCE = $env:GEMINI_ENTERPRISE_INSTANCE
 $PROJECT_NUMBER = if ($env:PROJECT_NUMBER) { $env:PROJECT_NUMBER } else { $env:GOOGLE_CLOUD_PROJECT_NUMBER }
 $GEMINI_APP_LOCATION = if ($env:GEMINI_APP_LOCATION) { $env:GEMINI_APP_LOCATION } else { "global" }
+$AGENT_REGION = if ($env:AGENT_REGION) { $env:AGENT_REGION } else { "us-central1" }
 $ARTIFACTS_BUCKET = if ($env:GCS_BUCKET_NAME) { $env:GCS_BUCKET_NAME } else { "geapp_agents_storage" } # Default, can be overridden via args
 
 # Check if arguments provided
@@ -41,7 +42,7 @@ while ($i -lt $args.Count) {
     }
 }
 
-Write-Host "🚀 Deploying Omni-Agent to project: $PROJECT"
+Write-Host "🚀 Deploying Omni-Agent to project: $PROJECT (region: $AGENT_REGION)"
 Write-Host "🏢 Targeting Gemini Enterprise Instance: $INSTANCE"
 Write-Host "🪣  Using Artifacts Bucket: $ARTIFACTS_BUCKET"
 
@@ -132,8 +133,8 @@ try {
     gcloud iam service-accounts add-iam-policy-binding "$($PROJECT_NUMBER)-compute@developer.gserviceaccount.com" --member="serviceAccount:$AGENT_RUNTIME_SERVICE_ACCOUNT" --role="roles/iam.serviceAccountTokenCreator" --project="$PROJECT" --condition=None 2>&1 | Out-Null
 } catch {}
 
-# Pass the project explicitly to the agents-cli deployments.
-agents-cli deploy --project "$PROJECT" --no-confirm-project @remainingArgs
+# Pass the project and region explicitly to the agents-cli deployments.
+agents-cli deploy --project "$PROJECT" --region "$AGENT_REGION" --no-confirm-project @remainingArgs
 if ($LASTEXITCODE -ne 0) {
     throw "agents-cli deploy failed with exit code $LASTEXITCODE"
 }

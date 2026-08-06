@@ -15,10 +15,17 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-omini-test-agent}"
+# Source environment variables if .env exists
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
+
+PROJECT_ID="${PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-omini-test-agent}}"
 PROJECT_NUMBER="${PROJECT_NUMBER:-687484203981}"
-REGION="${REGION:-us-central1}"
-APP_ID="${APP_ID:-gemini-enterprise-17842095_1784209567197}"
+REGION="${AGENT_REGION:-${REGION:-us-central1}}"
+APP_ID="${APP_ID:-${GEMINI_ENTERPRISE_INSTANCE:-gemini-enterprise-17842095_1784209567197}}"
 SERVICE_NAME="${SERVICE_NAME:-omni-agent}"
 
 # Locate agents-cli binary
