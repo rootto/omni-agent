@@ -143,13 +143,13 @@ def has_audio_stream(local_path: str) -> bool:
 def merge_storyboard_clips(video_paths: list[str], output_path: str) -> None:
     """Concatenates independent storyboard video clips into a single continuous MP4 file.
     
-    Normalizes each clip into an MPEG-TS intermediate file with consistent H.264 video
-    and stereo AAC audio (injecting silent audio if missing) to ensure monotonic timestamps
-    and prevent players from cutting off early.
+    Normalizes each clip into a standardized MP4 intermediate file with consistent H.264 video,
+    24 fps, and stereo AAC audio (injecting silent audio if missing). Merges using ffmpeg's
+    concat demuxer with a filelist and falls back to filter_complex concat if needed.
     """
     ensure_binaries()
     temp_dir = os.path.dirname(output_path)
-    ts_files = []
+    norm_mp4_files = []
     total_input_duration = 0.0
 
     for idx, chunk_path in enumerate(video_paths, start=1):
@@ -163,7 +163,7 @@ def merge_storyboard_clips(video_paths: list[str], output_path: str) -> None:
         has_audio = has_audio_stream(chunk_path)
         logger.warning("[merge_storyboard_clips] Clip %d/%d (%s): duration=%.2fs, has_audio=%s", idx, len(video_paths), chunk_path, dur, has_audio)
         
-        ts_path = os.path.join(temp_dir, f"norm_clip_{idx:03d}.ts")
+        norm_path = os.path.join(temp_dir, f"norm_clip_{idx:03d}.mp4")
         
         if has_audio:
             cmd_norm = [
@@ -176,8 +176,7 @@ def merge_storyboard_clips(video_paths: list[str], output_path: str) -> None:
                 "-c:a", "aac",
                 "-ar", "44100",
                 "-ac", "2",
-                "-f", "mpegts",
-                ts_path
+                norm_path
             ]
         else:
             cmd_norm = [
@@ -193,11 +192,10 @@ def merge_storyboard_clips(video_paths: list[str], output_path: str) -> None:
                 "-ar", "44100",
                 "-ac", "2",
                 "-shortest",
-                "-f", "mpegts",
-                ts_path
+                norm_path
             ]
             
-        logger.warning("[merge_storyboard_clips] Normalizing clip %d to MPEG-TS: %s", idx, " ".join(cmd_norm))
+        logger.warning("[merge_storyboard_clips] Normalizing clip %d to standard MP4: %s", idx, " ".join(cmd_norm))
         res_norm = subprocess.run(cmd_norm, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if res_norm.returncode != 0:
             logger.warning("[merge_storyboard_clips] Normalization failed for clip %d (rc=%d): %s. Retrying with fallback synthetic audio...", idx, res_norm.returncode, res_norm.stderr.decode('utf-8', errors='ignore'))
@@ -214,31 +212,68 @@ def merge_storyboard_clips(video_paths: list[str], output_path: str) -> None:
                 "-ar", "44100",
                 "-ac", "2",
                 "-shortest",
-                "-f", "mpegts",
-                ts_path
+                norm_path
             ]
             res_fb = subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if res_fb.returncode != 0:
                 logger.error("[merge_storyboard_clips] Fallback normalization failed for clip %d (rc=%d): %s", idx, res_fb.returncode, res_fb.stderr.decode('utf-8', errors='ignore'))
                 raise RuntimeError(f"ffmpeg normalization failed for clip {idx}: {res_fb.stderr.decode('utf-8', errors='ignore')}")
             
-        ts_files.append(ts_path)
+        norm_mp4_files.append(norm_path)
 
-    # Concatenate all MPEG-TS files into final MP4
-    ts_list_str = "concat:" + "|".join(ts_files)
-    cmd_concat = [
+    # Method 1: Concat Demuxer with filelist.txt
+    concat_list_file = os.path.join(temp_dir, "concat_filelist.txt")
+    with open(concat_list_file, "w", encoding="utf-8") as f:
+        for p in norm_mp4_files:
+            # Escape single quotes if any in file path
+            escaped_p = p.replace("'", "'\\''")
+            f.write(f"file '{escaped_p}'\n")
+
+    cmd_concat_demux = [
         FFMPEG_PATH,
         "-y",
-        "-i", ts_list_str,
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_list_file,
         "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",
+        "-movflags", "+faststart",
         output_path
     ]
-    logger.warning("[merge_storyboard_clips] Concatenating %d TS files into %s: %s", len(ts_files), output_path, " ".join(cmd_concat))
-    res_concat = subprocess.run(cmd_concat, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if res_concat.returncode != 0:
-        logger.error("[merge_storyboard_clips] TS concat failed (rc=%d): %s", res_concat.returncode, res_concat.stderr.decode('utf-8', errors='ignore'))
-        raise RuntimeError(f"ffmpeg TS concat failed: {res_concat.stderr.decode('utf-8', errors='ignore')}")
+    logger.warning("[merge_storyboard_clips] Concatenating %d MP4 files via concat demuxer: %s", len(norm_mp4_files), " ".join(cmd_concat_demux))
+    res_demux = subprocess.run(cmd_concat_demux, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    if res_demux.returncode != 0:
+        logger.warning("[merge_storyboard_clips] Concat demuxer failed (rc=%d): %s. Falling back to filter_complex concat...", res_demux.returncode, res_demux.stderr.decode('utf-8', errors='ignore'))
+        
+        # Method 2: filter_complex fallback
+        filter_inputs = []
+        filter_spec_parts = []
+        for i, p in enumerate(norm_mp4_files):
+            filter_inputs.extend(["-i", p])
+            filter_spec_parts.append(f"[{i}:v][{i}:a]")
+        filter_spec = "".join(filter_spec_parts) + f"concat=n={len(norm_mp4_files)}:v=1:a=1[outv][outa]"
+
+        cmd_filter_concat = [
+            FFMPEG_PATH,
+            "-y",
+            *filter_inputs,
+            "-filter_complex", filter_spec,
+            "-map", "[outv]",
+            "-map", "[outa]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-r", "24",
+            "-c:a", "aac",
+            "-ar", "44100",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            output_path
+        ]
+        logger.warning("[merge_storyboard_clips] Running filter_complex concat fallback: %s", " ".join(cmd_filter_concat))
+        res_filter = subprocess.run(cmd_filter_concat, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res_filter.returncode != 0:
+            logger.error("[merge_storyboard_clips] filter_complex concat failed (rc=%d): %s", res_filter.returncode, res_filter.stderr.decode('utf-8', errors='ignore'))
+            raise RuntimeError(f"ffmpeg video concat failed: {res_filter.stderr.decode('utf-8', errors='ignore')}")
 
     try:
         merged_dur = get_video_duration(output_path)
