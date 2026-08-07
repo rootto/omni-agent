@@ -31,32 +31,48 @@ else:
     FFPROBE_PATH = os.path.join(BIN_DIR, "ffprobe")
     
     def ensure_binaries():
-        """Ensures that ffmpeg and ffprobe static binaries are available in /tmp/bin."""
-        if os.path.exists(FFMPEG_PATH) and os.path.exists(FFPROBE_PATH):
+        """Ensures that ffmpeg and ffprobe static binaries are available and executable in /tmp/bin."""
+        if (
+            os.path.exists(FFMPEG_PATH)
+            and os.access(FFMPEG_PATH, os.X_OK)
+            and os.path.exists(FFPROBE_PATH)
+            and os.access(FFPROBE_PATH, os.X_OK)
+        ):
             return
 
         os.makedirs(BIN_DIR, exist_ok=True)
-        logger.info("Static binaries not found in %s. Downloading from GCS...", BIN_DIR)
+        bucket_name = os.environ.get("BINARIES_BUCKET_NAME") or os.environ.get("GCS_BUCKET_NAME") or "geapp_agents_storage"
+        logger.info("Static binaries not found or not executable in %s. Downloading from GCS bucket '%s'...", BIN_DIR, bucket_name)
         
-        storage_client = storage.Client()
-        bucket_name = os.environ.get("BINARIES_BUCKET_NAME", "geapp_agents_storage")
-        bucket = storage_client.bucket(bucket_name)
-        
-        # Download ffmpeg
-        if not os.path.exists(FFMPEG_PATH):
-            logger.info("Downloading ffmpeg from GCS...")
-            blob = bucket.blob("bin/ffmpeg")
-            blob.download_to_filename(FFMPEG_PATH)
-            os.chmod(FFMPEG_PATH, 0o755)
-            logger.info("ffmpeg downloaded and made executable.")
+        try:
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+        except Exception as e:
+            logger.error("Failed to initialize GCS client in ensure_binaries: %s", e)
+            return
 
-        # Download ffprobe
-        if not os.path.exists(FFPROBE_PATH):
-            logger.info("Downloading ffprobe from GCS...")
-            blob = bucket.blob("bin/ffprobe")
-            blob.download_to_filename(FFPROBE_PATH)
-            os.chmod(FFPROBE_PATH, 0o755)
-            logger.info("ffprobe downloaded and made executable.")
+        for binary_name, target_path in [("ffmpeg", FFMPEG_PATH), ("ffprobe", FFPROBE_PATH)]:
+            if not (os.path.exists(target_path) and os.access(target_path, os.X_OK)):
+                temp_path = f"{target_path}.tmp.{os.getpid()}"
+                try:
+                    logger.info("Downloading %s from gs://%s/bin/%s...", binary_name, bucket_name, binary_name)
+                    blob = bucket.blob(f"bin/{binary_name}")
+                    blob.download_to_filename(temp_path)
+                    os.chmod(temp_path, 0o755)
+                    os.replace(temp_path, target_path)
+                    logger.info("%s downloaded and made executable at %s.", binary_name, target_path)
+                except Exception as e:
+                    logger.error("Failed to download %s from gs://%s/bin/%s: %s", binary_name, bucket_name, binary_name, e)
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except Exception:
+                            pass
+                    if os.path.exists(target_path):
+                        try:
+                            os.chmod(target_path, 0o755)
+                        except Exception:
+                            pass
 
 def _generate_signed_url(gcs_uri: str) -> str:
     """Generates an authenticated HTTPS download URL for a GCS URI."""

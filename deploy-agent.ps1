@@ -68,6 +68,46 @@ if (-not $bucketExists) {
     Write-Host "Bucket gs://$ARTIFACTS_BUCKET already exists."
 }
 
+# Ensure ffmpeg & ffprobe static Linux binaries exist in the target GCS bucket for runtime video merging
+Write-Host "📦 Verifying static ffmpeg & ffprobe binaries in gs://$ARTIFACTS_BUCKET/bin/..."
+$binariesExist = $false
+try {
+    gcloud storage ls "gs://$ARTIFACTS_BUCKET/bin/ffmpeg" --project "$PROJECT" 2>&1 | Out-Null
+    $ffmpegRc = $LASTEXITCODE
+    gcloud storage ls "gs://$ARTIFACTS_BUCKET/bin/ffprobe" --project "$PROJECT" 2>&1 | Out-Null
+    $ffprobeRc = $LASTEXITCODE
+    if ($ffmpegRc -eq 0 -and $ffprobeRc -eq 0) {
+        $binariesExist = $true
+    }
+} catch {
+    $binariesExist = $false
+}
+
+if (-not $binariesExist) {
+    Write-Host "Static ffmpeg/ffprobe binaries missing in gs://$ARTIFACTS_BUCKET/bin/. Downloading and uploading..."
+    $tmpDir = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
+    [System.IO.Directory]::CreateDirectory($tmpDir) | Out-Null
+    try {
+        $ffmpegUrl = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-x64"
+        $ffprobeUrl = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffprobe-linux-x64"
+        $ffmpegFile = [System.IO.Path]::Combine($tmpDir, "ffmpeg")
+        $ffprobeFile = [System.IO.Path]::Combine($tmpDir, "ffprobe")
+        Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegFile -UseBasicParsing
+        Invoke-WebRequest -Uri $ffprobeUrl -OutFile $ffprobeFile -UseBasicParsing
+        gcloud storage cp $ffmpegFile "gs://$ARTIFACTS_BUCKET/bin/ffmpeg" --project "$PROJECT" 2>&1 | Out-Null
+        gcloud storage cp $ffprobeFile "gs://$ARTIFACTS_BUCKET/bin/ffprobe" --project "$PROJECT" 2>&1 | Out-Null
+        Write-Host "✅ Uploaded static ffmpeg & ffprobe to gs://$ARTIFACTS_BUCKET/bin/"
+    } catch {
+        Write-Host "⚠️  Could not automatically download static binaries: $_"
+    } finally {
+        if (Test-Path $tmpDir) {
+            Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+} else {
+    Write-Host "✅ Static ffmpeg & ffprobe binaries already present in gs://$ARTIFACTS_BUCKET/bin/"
+}
+
 # We must update .env so agents-cli injects it to the deployed reasoning engine!
 if (Test-Path ".env") {
     $envContent = Get-Content ".env"

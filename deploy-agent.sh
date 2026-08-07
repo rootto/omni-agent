@@ -43,6 +43,32 @@ else
     echo "Bucket gs://$ARTIFACTS_BUCKET already exists."
 fi
 
+# Ensure ffmpeg & ffprobe static Linux binaries exist in the target GCS bucket for runtime video merging
+echo "📦 Verifying static ffmpeg & ffprobe binaries in gs://$ARTIFACTS_BUCKET/bin/..."
+if ! gcloud storage ls "gs://$ARTIFACTS_BUCKET/bin/ffmpeg" --project "$PROJECT" >/dev/null 2>&1 || ! gcloud storage ls "gs://$ARTIFACTS_BUCKET/bin/ffprobe" --project "$PROJECT" >/dev/null 2>&1; then
+    echo "Static ffmpeg/ffprobe binaries missing in gs://$ARTIFACTS_BUCKET/bin/. Downloading and uploading..."
+    TMP_BIN_DIR=$(mktemp -d)
+    if curl -sL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o "$TMP_BIN_DIR/ffmpeg.tar.xz" 2>/dev/null && [ -s "$TMP_BIN_DIR/ffmpeg.tar.xz" ]; then
+        tar -xJf "$TMP_BIN_DIR/ffmpeg.tar.xz" -C "$TMP_BIN_DIR" --strip-components=1 2>/dev/null || true
+    fi
+    if [ ! -f "$TMP_BIN_DIR/ffmpeg" ] || [ ! -f "$TMP_BIN_DIR/ffprobe" ]; then
+        echo "Downloading individual static binaries..."
+        curl -sL "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-x64" -o "$TMP_BIN_DIR/ffmpeg" 2>/dev/null || true
+        curl -sL "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffprobe-linux-x64" -o "$TMP_BIN_DIR/ffprobe" 2>/dev/null || true
+    fi
+    if [ -f "$TMP_BIN_DIR/ffmpeg" ] && [ -f "$TMP_BIN_DIR/ffprobe" ]; then
+        chmod +x "$TMP_BIN_DIR/ffmpeg" "$TMP_BIN_DIR/ffprobe"
+        gcloud storage cp "$TMP_BIN_DIR/ffmpeg" "gs://$ARTIFACTS_BUCKET/bin/ffmpeg" --project "$PROJECT"
+        gcloud storage cp "$TMP_BIN_DIR/ffprobe" "gs://$ARTIFACTS_BUCKET/bin/ffprobe" --project "$PROJECT"
+        echo "✅ Uploaded ffmpeg and ffprobe to gs://$ARTIFACTS_BUCKET/bin/"
+    else
+        echo "⚠️ Could not download static ffmpeg/ffprobe binaries automatically. Please ensure gs://$ARTIFACTS_BUCKET/bin/ffmpeg exists."
+    fi
+    rm -rf "$TMP_BIN_DIR"
+else
+    echo "✅ Static ffmpeg & ffprobe binaries already present in gs://$ARTIFACTS_BUCKET/bin/"
+fi
+
 # We must update .env so agents-cli injects it to the deployed reasoning engine!
 sed -i "s/^LOGS_BUCKET_NAME=.*/LOGS_BUCKET_NAME=$ARTIFACTS_BUCKET/" .env
 sed -i "s/^GCS_BUCKET_NAME=.*/GCS_BUCKET_NAME=$ARTIFACTS_BUCKET/" .env
